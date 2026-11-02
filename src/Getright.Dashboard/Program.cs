@@ -13,6 +13,7 @@ builder.Services.AddRazorComponents().AddInteractiveServerComponents()
 builder.Services.AddSingleton<UatCatalogue>();
 builder.Services.AddSingleton<RunStore>();
 builder.Services.AddSingleton<ApplicationSetup>();
+builder.Services.AddHostedService<LeaseMonitor>();
 var protection = builder.Services.AddDataProtection()
     .SetApplicationName("Getright")
     .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(RunStore.ResolveDataPath(builder.Configuration), "keys")));
@@ -51,6 +52,20 @@ app.MapPost("/api/applications/{id}/profile", (string id, ApplicationProfile pro
 });
 app.MapGet("/api/applications/{id}/readiness", (string id, ApplicationSetup setup, CancellationToken cancellationToken) => setup.Check(id, cancellationToken));
 app.MapPost("/api/worker/claim", (RunStore store) => store.Claim() is { } lease ? Results.Ok(lease) : Results.NoContent());
+app.MapGet("/api/history", (int? page, int? pageSize, string? test, string? application, string? status, string? acceptance, long? snapshot, RunStore store) => store.History(page ?? 1, pageSize ?? 20, test, application, status, acceptance, snapshot));
+app.MapGet("/api/job-history", (int? page, int? pageSize, string? application, string? status, long? snapshot, RunStore store) => store.JobHistory(page ?? 1, pageSize ?? 20, application, status, snapshot));
+app.MapPost("/api/runs/{id}/heartbeat", (string id, JobLeaseRequest request, RunStore store) => store.HeartbeatRun(id, request.Lease));
+app.MapPost("/api/runs/{id}/cancel", (string id, RunStore store) => store.CancelRun(id));
+app.MapGet("/api/runs/{id}/reviews", (string id, long? after, RunStore store) => store.ReviewHistory(id, after ?? 0));
+app.MapGet("/api/maintenance/preview-page", (int? days, int? page, RunStore store) => store.PreviewCleanupBatch(days ?? 30, page ?? 1));
+app.MapGet("/api/maintenance/history", (int? page, long? snapshot, RunStore store) => store.CleanupHistory(page ?? 1, snapshot));
+app.MapGet("/api/maintenance/preview", (int? days, RunStore store) => store.CleanupPreview(days ?? 30));
+app.MapGet("/api/maintenance/tasks", (RunStore store) => store.Cleanups());
+app.MapPost("/api/maintenance/tasks", (CleanupRequest request, RunStore store) => store.RequestCleanup(request));
+app.MapPost("/api/maintenance/tasks/{id}/cancel", (string id, RunStore store) => store.CancelCleanup(id));
+app.MapPost("/api/worker/cleanup/claim", (RunStore store) => store.ClaimCleanup() is { } claim ? Results.Ok(claim) : Results.NoContent());
+app.MapPost("/api/maintenance/tasks/{id}/heartbeat", (string id, JobLeaseRequest request, RunStore store) => store.HeartbeatCleanup(id, request.Lease));
+app.MapPost("/api/maintenance/tasks/{id}/finish", (string id, CleanupFinish request, RunStore store) => store.FinishCleanup(id, request));
 app.MapPost("/api/runs/{id}/complete", (string id, CompletionRequest request, RunStore store) => store.Complete(id, request));
 app.MapPost("/api/runs/{id}/review", (string id, ReviewRequest request, RunStore store) => store.Review(id, request.Acceptance));
 app.MapGet("/api/runs/{id}/feedback", (string id, RunStore store) => store.FeedbackFor(id));

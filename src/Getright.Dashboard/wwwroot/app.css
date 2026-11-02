@@ -99,3 +99,15 @@ textarea { resize: vertical; }textarea + button { margin-top: 14px; }hr { border
 @media (min-width: 1650px) { .shell > main { max-width: 1570px; width: 100%; margin: 0 auto; } }
 @media (max-width: 1150px) { .shell { grid-template-columns: 190px minmax(0,1fr); }.shell > main { padding: 0 24px 24px; }.workspace-grid { grid-template-columns: 1fr; }.stats { gap: 10px; }.stats > div { padding: 14px; } }
 @media (max-width: 700px) { .shell { display: block; }.sidebar { padding: 15px 20px; border-right: 0; border-bottom: 1px solid var(--line); }.sidebar-caption,.nav-current,.sidebar-bottom { display: none; }.brand { font-size: 23px; padding: 0; }.brand-icon { width: 30px; height: 30px; font-size: 25px; }.shell > main { padding: 0 15px 24px; }.topbar { min-height: 50px; }.page-header { align-items: flex-start; flex-direction: column; margin: 24px 0; }h1 { font-size: 27px; }.eyebrow { font-size: 8px; }.stats { grid-template-columns: 1fr 1fr; }.stats strong { font-size: 24px; }.workspace-grid { gap: 16px; }.test-card-bottom { gap: 10px; }.run-button { margin: 4px 0 0; width: 100%; }.metadata { grid-template-columns: 1fr; }.fixture-card { padding: 24px; }.toast { right: 15px; bottom: 15px; } }
+
+.history-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.history-row { flex-wrap: wrap; }
+.history-row a { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.comparison p, .feedback p { overflow-wrap: anywhere; }
+.review-event { border-left: 3px solid #d7e3dc; padding-left: 12px; }
+@media (max-width: 700px) { .history-filters { grid-template-columns: 1fr; } .history-row a { flex-basis: 100%; } }
+
+.badge.completed { background: #e5f2e9; color: #236346; }
+.badge.cancelled { background: #f5eddd; color: #78551e; }
+
+.comparison-summary { padding: 24px; }

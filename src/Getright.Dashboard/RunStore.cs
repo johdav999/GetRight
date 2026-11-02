@@ -34,7 +34,7 @@ public sealed partial class RunStore
         command.ExecuteNonQuery();
         command.CommandText = "PRAGMA user_version";
         var schemaVersion = Convert.ToInt32(command.ExecuteScalar());
-        if (schemaVersion > 3) throw new InvalidOperationException("This database requires a newer Getright version.");
+        if (schemaVersion > 4) throw new InvalidOperationException("This database requires a newer Getright version.");
         using (var transaction = db.BeginTransaction())
         {
             command.Transaction = transaction;
@@ -62,37 +62,57 @@ public sealed partial class RunStore
                     """;
                 command.ExecuteNonQuery();
             }
+            if (schemaVersion < 4)
+            {
+                command.CommandText = """
+                    ALTER TABLE runs ADD COLUMN lease_expires TEXT;
+                    CREATE TABLE review_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES runs(id), created_at TEXT NOT NULL, action TEXT NOT NULL, previous TEXT NOT NULL, current TEXT NOT NULL, feedback_id TEXT);
+                    CREATE INDEX review_events_run ON review_events(run_id, sequence);
+                    CREATE INDEX runs_status ON runs(json_extract(payload,'$.status'));
+                    CREATE INDEX runs_test ON runs(json_extract(payload,'$.testId'));
+                    CREATE INDEX jobs_status ON improvement_jobs(json_extract(payload,'$.status'));
+                    CREATE TABLE cleanup_tasks(id TEXT PRIMARY KEY, payload TEXT NOT NULL, lease TEXT, lease_expires TEXT);
+                    PRAGMA user_version=4;
+                    """;
+                command.ExecuteNonQuery();
+            }
             transaction.Commit();
         }
         // A restarted dashboard cannot vouch for workers from the old process.
-        foreach (var run in List().Where(r => r.Status == "running"))
+        foreach (var run in ReadRuns("WHERE json_extract(payload,'$.status') = 'running'"))
             Save(run with { Status = "interrupted", CompletedAt = DateTimeOffset.UtcNow,
                 Error = "Dashboard restarted during execution. Queue a new run." });
-        foreach (var job in ReadJobs().Where(j => JobStates.Active(j.Status)))
+        RecoverCleanups();
+        foreach (var job in ReadJobs("WHERE json_extract(payload,'$.status') IN ('preparing','implementing','building','launching','rerunning')"))
             EndJob(job, "interrupted", "Dashboard restarted. The worktree is retained; create a new job to retry.");
     }
 
     private SqliteConnection Open() { var db = new SqliteConnection(connectionString); db.Open(); return db; }
-    public List<UatRun> List()
+    private List<UatRun> ReadRuns(string suffix)
+    {
+        using var db = Open(); using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT payload FROM runs " + suffix;
+        using var reader = cmd.ExecuteReader(); var result = new List<UatRun>();
+        while (reader.Read()) result.Add(JsonSerializer.Deserialize<UatRun>(reader.GetString(0), AppJson.Options)!);
+        return result;
+    }
+    public List<UatRun> List() { lock (gate) { Sweep(); return ReadRuns("ORDER BY rowid DESC LIMIT 100"); } }
+    public UatRun Get(string id)
     {
         lock (gate)
         {
-            using var db = Open(); using var cmd = db.CreateCommand();
-            cmd.CommandText = "SELECT payload FROM runs ORDER BY rowid DESC";
-            using var reader = cmd.ExecuteReader(); var result = new List<UatRun>();
-            while (reader.Read()) result.Add(JsonSerializer.Deserialize<UatRun>(reader.GetString(0), AppJson.Options)!);
-            return result;
+            ExpireRuns(); using var db = Open(); using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT payload FROM runs WHERE id=$id"; cmd.Parameters.AddWithValue("$id", id);
+            return cmd.ExecuteScalar() is string payload ? JsonSerializer.Deserialize<UatRun>(payload, AppJson.Options)! : throw new ArgumentException("Unknown run.");
         }
     }
-    public UatRun Get(string id) => List().FirstOrDefault(r => r.Id == id)
-        ?? throw new ArgumentException("Unknown run.");
-    private void Save(UatRun run, string? lease = null)
+    private void Save(UatRun run, string? lease = null, DateTimeOffset? expires = null)
     {
         using var db = Open(); using var cmd = db.CreateCommand();
-        cmd.CommandText = "INSERT INTO runs(id,payload,lease) VALUES($id,$payload,$lease) ON CONFLICT(id) DO UPDATE SET payload=$payload,lease=$lease";
+        cmd.CommandText = "INSERT INTO runs(id,payload,lease,lease_expires) VALUES($id,$payload,$lease,$expires) ON CONFLICT(id) DO UPDATE SET payload=$payload,lease=$lease,lease_expires=$expires";
         cmd.Parameters.AddWithValue("$id", run.Id);
         cmd.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(run, AppJson.Options));
-        cmd.Parameters.AddWithValue("$lease", (object?)lease ?? DBNull.Value); cmd.ExecuteNonQuery();
+        cmd.Parameters.AddWithValue("$lease", (object?)lease ?? DBNull.Value); cmd.Parameters.AddWithValue("$expires", (object?)expires?.ToString("O") ?? DBNull.Value); cmd.ExecuteNonQuery();
     }
     public UatRun Queue(string testId, ApplicationProfile? target = null)
     {
@@ -114,14 +134,11 @@ public sealed partial class RunStore
     {
         lock (gate)
         {
-            foreach (var stale in List().Where(r => r.Status == "running" &&
-                r.StartedAt < DateTimeOffset.UtcNow.AddMinutes(-10)))
-                Save(stale with { Status = "interrupted", CompletedAt = DateTimeOffset.UtcNow,
-                    Error = "Worker lease expired. Queue a new run." });
-            var run = List().LastOrDefault(r => r.Status == "queued");
+            Sweep();
+            var run = ReadRuns("WHERE json_extract(payload,'$.status') = 'queued' ORDER BY rowid LIMIT 1").FirstOrDefault();
             if (run is null) return null;
             run = run with { Status = "running", StartedAt = DateTimeOffset.UtcNow };
-            var lease = Guid.NewGuid().ToString("N"); Save(run, lease);
+            var lease = Guid.NewGuid().ToString("N"); Save(run, lease, DateTimeOffset.UtcNow.AddSeconds(45));
             return new RunLease(run, lease);
         }
     }
@@ -135,10 +152,10 @@ public sealed partial class RunStore
     {
         lock (gate)
         {
-            var run = Get(id);
-            if (run.Status != "running" || string.IsNullOrWhiteSpace(request.Lease) || Lease(id) != request.Lease)
-                throw new ArgumentException("The worker lease is no longer valid.");
-            if (request.Status is not ("passed" or "failed")) throw new ArgumentException("Invalid result status.");
+            var run = RequireRunLease(id, request.Lease);
+            if (request.Status is not ("passed" or "failed" or "interrupted" or "cancelled")) throw new ArgumentException("Invalid result status.");
+            if (request.Status == "cancelled" && !run.CancelRequested) throw new ArgumentException("Cancellation was not requested.");
+            if (run.CancelRequested) request = request with { Status = "cancelled", Error = "Cancelled by the local user." };
             var steps = request.Steps ?? [];
             if (steps.Select(s => s.StepId).Distinct().Count() != steps.Count ||
                 steps.Any(s => !run.TestSnapshot.Steps.Any(t => t.Id == s.StepId) || s.Status is not ("passed" or "failed")))
@@ -173,7 +190,7 @@ public sealed partial class RunStore
     public string? EvidencePath(string id, string file)
     {
         if (file.Contains('/') || file.Contains('\\') || Path.GetFileName(file) != file) return null;
-        var run = Get(id); var reference = $"{id}/{file}";
+        var run = Get(id); if (run.EvidenceRetiredAt is not null) return null; var reference = $"{id}/{file}";
         return run.Trace == reference || run.Steps.Any(s => s.Screenshot == reference)
             ? Path.Combine(DataPath, "evidence", id, file) : null;
     }
@@ -185,7 +202,12 @@ public sealed partial class RunStore
             if (run.Status is "queued" or "running") throw new ArgumentException("Review a completed run.");
             if (acceptance is not ("accepted" or "improvements-requested" or "pending"))
                 throw new ArgumentException("Invalid review status.");
-            Save(run with { Acceptance = acceptance }); return Get(id);
+            EnsureNoEvidenceCleanup(id);
+            using var db = Open(); using var transaction = db.BeginTransaction();
+            using var cmd = db.CreateCommand(); cmd.Transaction = transaction;
+            cmd.CommandText = "UPDATE runs SET payload=$payload WHERE id=$id";
+            cmd.Parameters.AddWithValue("$id", id); cmd.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(run with { Acceptance = acceptance }, AppJson.Options)); cmd.ExecuteNonQuery();
+            Audit(db, transaction, run, "review", acceptance); transaction.Commit(); return Get(id);
         }
     }
     public List<Feedback> FeedbackFor(string id)
@@ -206,6 +228,7 @@ public sealed partial class RunStore
         {
             var run = Get(id);
             if (run.Status is "queued" or "running") throw new ArgumentException("Review a completed run.");
+            EnsureNoEvidenceCleanup(id);
             var step = run.TestSnapshot.Steps.FirstOrDefault(s => s.Id == request.StepId)
                 ?? throw new ArgumentException("Unknown test step.");
             if (string.IsNullOrWhiteSpace(request.Comment) || string.IsNullOrWhiteSpace(request.RequestedOutcome) ||
@@ -234,7 +257,7 @@ public sealed partial class RunStore
             cmd.Parameters.AddWithValue("$id", feedback.Id); cmd.Parameters.AddWithValue("$run", id);
             cmd.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(feedback, AppJson.Options));
             cmd.Parameters.AddWithValue("$runPayload", JsonSerializer.Serialize(run with { Acceptance = "improvements-requested" }, AppJson.Options));
-            cmd.ExecuteNonQuery(); transaction.Commit(); return feedback;
+            cmd.ExecuteNonQuery(); Audit(db, transaction, run, "feedback", "improvements-requested", feedback.Id); transaction.Commit(); return feedback;
         }
     }
 

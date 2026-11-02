@@ -9,7 +9,7 @@ Their GitHub definitions are kept in `config/milestones.json`.
 | [1 — WriterApp UAT](https://github.com/johdav999/GetRight/milestone/1) | Five repeatable workflows against isolated WriterApp data, with build/account checks and reviewable evidence. | In progress |
 | [2 — Feedback-to-fix cycle](https://github.com/johdav999/GetRight/milestone/2) | An editable task becomes a Codex worktree job, a verified build and a linked rerun. | Implemented and validated |
 | [3 — Virtual Company UAT](https://github.com/johdav999/GetRight/milestone/3) | Test-company setup and draft permissions use dedicated company data and the shared UAT cycle. | Implemented and validated |
-| [4 — Operational polish and reliability](https://github.com/johdav999/GetRight/milestone/4) | Repeated cycles, cancellation, recovery, audit, cleanup and comparison work reliably. | Planned |
+| [4 — Operational polish and reliability](https://github.com/johdav999/GetRight/milestone/4) | Repeated cycles, cancellation, recovery, audit, cleanup and comparison work reliably. | Implemented and validated |
 
 ## 1 — WriterApp UAT
 
@@ -88,10 +88,22 @@ identifies the running build and role, and a user can review the complete cycle.
 
 ## 4 — Operational polish and reliability
 
-Extend heartbeat/cancellation and process supervision to standalone UAT runs; add review audit history,
-pagination, evidence retention, before/after comparison and worktree cleanup.
-Exercise failure and restart paths and polish the real user flows. Add remote
-dashboard/worker authentication only if hosted operation becomes a requirement.
+- [x] Standalone run heartbeat, cancellation, bounded execution and browser shutdown.
+- [x] Background lease recovery and rejection of stale writes after expiry/restart.
+- [x] Separate child-process owners that stop owned commands after worker death.
+- [x] Transactional review audit, including feedback-induced acceptance changes.
+- [x] Paged history/jobs and stable browsing while new runs arrive.
+- [x] Desktop/mobile comparison of any two runs of the same test.
+- [x] Explicit evidence retention and reviewed clean worktree removal, with a cleanup journal.
+- [x] Validate modified/unrelated resource refusal, partial cleanup, retry and restart.
+- [x] Fix early pagination clicks and verify the real dashboard flows.
+
+Validated on 2026-11-02: 18 worker checks, the existing demo/WriterApp/job/Virtual
+Company contracts, the five-flow operational acceptance suite and a fresh live
+Virtual Company UI/API run passed. Schema 4 preserves existing history. Selected
+cleanup retains review metadata, feedback, logs, branches and source commits.
+Remote authentication remains conditional on a future hosted deployment.
+See [Local operations and recovery](operations.md) for limits and validation scope.
 
 Acceptance: the local app handles repeated UAT cycles, interrupted work, failed
 builds and cleanup without losing history or mixing acceptance between runs.

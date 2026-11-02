@@ -10,8 +10,9 @@ Repository: [johdav999/GetRight](https://github.com/johdav999/GetRight).
 
 ## Implementation status
 
-This repository includes the foundation, the first WriterApp workflow, and
-milestone 2's feedback-to-fix implementation. It includes:
+This repository includes the foundation, the first WriterApp workflow, Virtual
+Company test-company setup, and the feedback-to-fix and operational milestones.
+It includes:
 
 - A .NET 10 Blazor dashboard with application filters, readable test steps and run history.
 - SQLite persistence for test snapshots, results, review decisions and feedback.
@@ -21,15 +22,16 @@ milestone 2's feedback-to-fix implementation. It includes:
 - Step-specific feedback, task previews and downloadable implementation prompts.
 - WriterApp application setup, runtime build/account checks, and a create/save/reopen
   adapter against an actual isolated WriterApp instance.
-- Four remaining draft WriterApp tests and one draft Virtual Company workflow.
+- Four remaining draft WriterApp tests; Virtual Company creation and draft-permission UAT.
 - Editable Codex jobs, isolated worktrees/commits, streamed progress, bounded build
   and launch logs, runtime version checks, linked reruns and before/after evidence.
-- Job cancellation, heartbeat leases and restart recovery.
+- Run/job cancellation, heartbeat leases, bounded execution and restart recovery.
+- Review audit history, paginated history, run comparison and explicit evidence/worktree cleanup.
 - Build checks, a browser/API smoke check, GitHub Actions and an issue template.
 
-**Not implemented yet:** the remaining WriterApp adapters, external/multi-user login,
-Virtual Company execution, broader operational polish, retention and automatic
-worktree cleanup. These are tracked in the [four-milestone roadmap](docs/roadmap.md).
+**Not implemented yet:** the remaining WriterApp adapters and external/multi-user login.
+Cleanup is explicitly selected and confirmed; automatic scheduled purges are not
+enabled. See the [four-milestone roadmap](docs/roadmap.md).
 Draft tests are disabled. Codex starts only after the explicit Implement action.
 
 ## Requirements
@@ -93,13 +95,15 @@ restricts profile writes, use the scripts for builds or set `DOTNET_CLI_HOME` an
 | `Getright__DataPath` | `<repo>/data` for source builds | Dashboard database and evidence root. For published output, the fallback is `data` beside the assembly. |
 | `GETRIGHT_DATA_PATH` | `<repo>/data` | Worker evidence root. Must match the dashboard data root. |
 | `GETRIGHT_DASHBOARD_URL` | `http://127.0.0.1:5120` | Worker API origin; loopback HTTP only. |
+| `GETRIGHT_RUN_TIMEOUT_MS` | `180000` | Standalone run deadline, 1000–600000 ms. |
 | `GETRIGHT_HEADLESS` | unset / false | Set exactly `true` for headless execution. |
 | `ASPNETCORE_URLS` | `http://127.0.0.1:5120` | Dashboard listening URL. Use a matching worker URL if changing the port. |
 
 Examples: `scripts/start-worker.ps1 -Headless`, or `-Once` to process at most one
 queued run. Stop either foreground process with Ctrl+C. A dashboard restart marks
-in-flight runs interrupted. A worker crash is detected on the next claim after a
-10-minute lease expires; queue a new run rather than overwriting the old result.
+in-flight runs interrupted. A worker crash or lost connection expires its 45-second heartbeat lease; the
+dashboard recovers it without waiting for another claim. Queue a new run rather
+than overwriting the old result.
 
 The dashboard and worker must share a local data directory. This version supports
 one dashboard process per database and sequential execution per worker. There is
@@ -113,6 +117,8 @@ dotnet build Getright.sln --configuration Release --no-restore --warnaserror
 npm test --prefix worker
 npm run smoke --prefix worker
 npm run smoke:jobs --prefix worker
+npm run smoke:virtual-company --prefix worker
+npm run smoke:operations --prefix worker
 ```
 
 The smoke check starts its own temporary dashboard on a free loopback port and
@@ -141,3 +147,6 @@ builds a clean isolated instance and saves its receipt to application setup.
 The first workflow creates a test company, saves draft permissions and verifies
 reopening and access boundaries. See [Virtual Company UAT](docs/virtual-company-uat.md)
 for SDK requirements, fixture boundaries and the opt-in real Codex cycle.
+
+For cancellation, audit history, comparison and explicit local cleanup, see
+[Local operations and recovery](docs/operations.md).

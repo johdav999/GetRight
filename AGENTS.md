@@ -36,3 +36,7 @@ README.md and docs/architecture.md before changing the execution workflow.
 - Virtual Company contracts: `npm run smoke:virtual-company --prefix worker`.
 - Real Virtual Company: `npm run smoke:virtual-company:live --prefix worker`; add
   `-- --cycle` to invoke real Codex. Use disposable data and retain pending acceptance.
+
+- Operational acceptance: `npm run smoke:operations --prefix worker`. Use only
+  disposable test fixtures for removal checks. Preserve branches, source commits,
+  run metadata and audit history during explicitly requested cleanup.

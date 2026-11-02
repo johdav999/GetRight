@@ -29,3 +29,4 @@ jobs:
       - run: npm run smoke --prefix worker
       - run: npm run smoke:jobs --prefix worker
       - run: npm run smoke:virtual-company --prefix worker
+      - run: npm run smoke:operations --prefix worker

@@ -25,6 +25,7 @@ else
         @if (notice is not null) { <p role="status">@notice</p> }
         @if (job.Summary is { } summary) { <h3>Codex result</h3><p class="preserve-lines">@summary</p> }
         <dl class="metadata"><div><dt>Base commit</dt><dd>@(job.BaseCommit ?? "Not recorded")</dd></div><div><dt>Result commit</dt><dd>@(job.ResultCommit ?? "Not recorded yet")</dd></div><div><dt>Tested build</dt><dd>@(job.BuildVersion ?? "Not built yet")</dd></div><div><dt>Codex thread</dt><dd>@(job.ThreadId ?? "Not started yet")</dd></div><div><dt>Worktree</dt><dd>@(job.WorktreePath ?? "Not prepared yet")</dd></div></dl>
+        @if (job.WorktreeRemovedAt is {} removed) { <p>Worktree removed at @removed.ToLocalTime().ToString("g"). The branch, commit and logs are retained.</p> }
         @if (job.WorktreePath is not null)
         { <div class="artifact-links">@foreach (var file in new[] { "codex.log", "build.log", "launch.log", "diff.patch", "summary.json" }) { if (Store.JobArtifactPath(job.Id, file) is { } artifact && System.IO.File.Exists(artifact)) { <a href="/api/jobs/@job.Id/artifacts/@file">@file</a> } }</div> }
         <div class="notice">The worktree and logs stay local for review. A completed job leaves the new run's human acceptance pending.</div>
@@ -38,7 +39,7 @@ else
         @foreach (var step in original.TestSnapshot.Steps)
         {
             var before = original.Steps.FirstOrDefault(s => s.StepId == step.Id); var after = rerun.Steps.FirstOrDefault(s => s.StepId == step.Id);
-            <article class="comparison-step"><h3>@step.Title</h3><div class="compare-images"><div><span class="mini-label">ORIGINAL · @original.BuildVersion</span>@if (before?.Screenshot is { } oldShot) { <a href="/api/evidence/@oldShot" target="_blank"><img src="/api/evidence/@oldShot" alt="Original @step.Title" loading="lazy" /></a> } else { <p>No screenshot available.</p> }</div><div><span class="mini-label">CHANGED · @rerun.BuildVersion</span>@if (after?.Screenshot is { } newShot) { <a href="/api/evidence/@newShot" target="_blank"><img src="/api/evidence/@newShot" alt="Changed @step.Title" loading="lazy" /></a> } else { <p>No screenshot available yet.</p> }</div></div></article>
+            <article class="comparison-step"><h3>@step.Title</h3><div class="compare-images"><div><span class="mini-label">ORIGINAL · @original.BuildVersion</span>@if (original.EvidenceRetiredAt is null && before?.Screenshot is { } oldShot) { <a href="/api/evidence/@oldShot" target="_blank"><img src="/api/evidence/@oldShot" alt="Original @step.Title" loading="lazy" /></a> } else { <p>No screenshot available.</p> }</div><div><span class="mini-label">CHANGED · @rerun.BuildVersion</span>@if (rerun.EvidenceRetiredAt is null && after?.Screenshot is { } newShot) { <a href="/api/evidence/@newShot" target="_blank"><img src="/api/evidence/@newShot" alt="Changed @step.Title" loading="lazy" /></a> } else { <p>No screenshot available yet.</p> }</div></div></article>
         }
         </section>
     }

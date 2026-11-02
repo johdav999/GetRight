@@ -8,7 +8,7 @@ public record ImprovementJob(string Id, string OriginalRunId, string FeedbackId,
     string Prompt, int Revision, string Status, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
     string? StartBlocker, string? BaseCommit = null, string? ResultCommit = null,
     string? WorktreePath = null, string? ThreadId = null, string? BuildVersion = null,
-    string? RerunId = null, string? Summary = null, string? Error = null, bool CancelRequested = false);
+    string? RerunId = null, string? Summary = null, string? Error = null, bool CancelRequested = false, DateTimeOffset? WorktreeRemovedAt = null);
 public record JobEvent(long Sequence, DateTimeOffset CreatedAt, string Stage, string Message);
 public record CreateJobRequest(string RunId, string FeedbackId);
 public record EditJobRequest(string Prompt, int Revision);
@@ -27,20 +27,23 @@ public static class JobStates
 
 public sealed partial class RunStore
 {
-    private List<ImprovementJob> ReadJobs()
+    private List<ImprovementJob> ReadJobs(string suffix = "ORDER BY rowid DESC")
     {
         using var db = Open(); using var cmd = db.CreateCommand();
-        cmd.CommandText = "SELECT payload FROM improvement_jobs ORDER BY rowid DESC";
+        cmd.CommandText = "SELECT payload FROM improvement_jobs " + suffix;
         using var reader = cmd.ExecuteReader(); var jobs = new List<ImprovementJob>();
         while (reader.Read()) jobs.Add(JsonSerializer.Deserialize<ImprovementJob>(reader.GetString(0), AppJson.Options)!);
         return jobs;
     }
     public List<ImprovementJob> Jobs()
     {
-        lock (gate) { ExpireJobs(); return ReadJobs(); }
+        lock (gate) { ExpireJobs(); return ReadJobs("ORDER BY rowid DESC LIMIT 100"); }
     }
-    private ImprovementJob ReadJob(string id) => ReadJobs().FirstOrDefault(j => j.Id == id)
-        ?? throw new ArgumentException("Unknown improvement job.");
+    private ImprovementJob ReadJob(string id)
+    {
+        using var db = Open(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT payload FROM improvement_jobs WHERE id=$id"; cmd.Parameters.AddWithValue("$id", id);
+        return cmd.ExecuteScalar() is string payload ? JsonSerializer.Deserialize<ImprovementJob>(payload, AppJson.Options)! : throw new ArgumentException("Unknown improvement job.");
+    }
     public ImprovementJob Job(string id) { lock (gate) { ExpireJobs(); return ReadJob(id); } }
     private void SaveJob(ImprovementJob job, string? lease = null, DateTimeOffset? expires = null)
     {
@@ -74,7 +77,8 @@ public sealed partial class RunStore
     {
         lock (gate)
         {
-            var run = Get(runId);
+            var run = Get(runId); EnsureNoEvidenceCleanup(runId);
+            if (run.EvidenceRetiredAt is not null) throw new ArgumentException("Evidence was retired. Run the test again before preparing a new job.");
             var feedback = FeedbackFor(runId).FirstOrDefault(f => f.Id == feedbackId) ?? throw new ArgumentException("Unknown feedback for this run.");
             var now = DateTimeOffset.UtcNow;
             var job = new ImprovementJob(Guid.NewGuid().ToString("N"), runId, feedbackId, run.ApplicationId,
@@ -122,7 +126,7 @@ public sealed partial class RunStore
     {
         lock (gate)
         {
-            ExpireJobs(); var job = ReadJobs().LastOrDefault(j => j.Status == "queued");
+            ExpireJobs(); var job = ReadJobs("WHERE json_extract(payload,'$.status') = 'queued' ORDER BY rowid LIMIT 1").FirstOrDefault();
             if (job is null) return null;
             var lease = Guid.NewGuid().ToString("N");
             job = job with { Status = "preparing", UpdatedAt = DateTimeOffset.UtcNow };
@@ -226,7 +230,7 @@ public sealed partial class RunStore
                 $"uat-{runId}", null, null, [], null, null, original.TestSnapshot, request.Target, null, job.Id, original.Id);
             job = job with { Status = "rerunning", RerunId = runId, UpdatedAt = now };
             using var db = Open(); using var transaction = db.BeginTransaction(); using var cmd = db.CreateCommand(); cmd.Transaction = transaction;
-            cmd.CommandText = "INSERT INTO runs(id,payload,lease) VALUES($run,$runPayload,$runLease); UPDATE improvement_jobs SET payload=$jobPayload,lease_expires=$expires WHERE id=$job";
+            cmd.CommandText = "INSERT INTO runs(id,payload,lease,lease_expires) VALUES($run,$runPayload,$runLease,$expires); UPDATE improvement_jobs SET payload=$jobPayload,lease_expires=$expires WHERE id=$job";
             cmd.Parameters.AddWithValue("$run", run.Id); cmd.Parameters.AddWithValue("$runPayload", JsonSerializer.Serialize(run, AppJson.Options));
             cmd.Parameters.AddWithValue("$runLease", runLease); cmd.Parameters.AddWithValue("$jobPayload", JsonSerializer.Serialize(job, AppJson.Options));
             cmd.Parameters.AddWithValue("$expires", now.AddSeconds(45).ToString("O")); cmd.Parameters.AddWithValue("$job", id);

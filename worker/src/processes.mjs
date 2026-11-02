@@ -1,5 +1,6 @@
 import { spawn, execFile } from 'node:child_process';
 import { appendFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const commonEnvironment = new Set(['PATH', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'USERPROFILE', 'HOME', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'TMPDIR', 'DOTNET_ROOT', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROCESSOR_ARCHITECTURE', 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'REQUESTS_CA_BUNDLE', 'LANG', 'LC_ALL']);
@@ -38,7 +39,7 @@ export async function stopProcess(child) {
 }
 
 export function launchProcess(command, args, { cwd, env, log = () => {} } = {}) {
-  const child = spawn(command, args, { cwd, env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./process-host.mjs', import.meta.url)), command, ...args], { cwd, env, shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   child.stdout.on('data', log); child.stderr.on('data', log);
   return child;
 }

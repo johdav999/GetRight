@@ -12,8 +12,8 @@
 <div class="stats">
     <div><span>Applications</span><strong>@Catalogue.Value.Applications.Count</strong></div>
     <div><span>Configured tests</span><strong>@Catalogue.Value.Tests.Count(CanRun) <small>/ @Catalogue.Value.Tests.Count tests</small></strong></div>
-    <div><span>Automated passes</span><strong>@runs.Count(r => r.Status == "passed")</strong></div>
-    <div><span>Awaiting review</span><strong>@runs.Count(r => r.CompletedAt is not null && r.Acceptance == "pending")</strong></div>
+    <div><span>Recent automated passes</span><strong>@runs.Count(r => r.Status == "passed")</strong></div>
+    <div><span>Recent runs awaiting review</span><strong>@runs.Count(r => r.CompletedAt is not null && r.Acceptance == "pending")</strong></div>
 </div>
 <div class="workspace-grid">
 <section class="panel catalogue">
@@ -44,7 +44,7 @@
         { <div class="notice">This adapter tests an actual local application instance. <a href="/applications">Configure its build, account and isolated data</a> before running. The connection is checked again for each run.</div> }
         <ol class="steps">@foreach (var step in current.Steps) { <li><strong>@step.Title</strong><p>@step.Expected</p></li> }</ol>
         <div class="review-question"><span class="mini-label">HUMAN REVIEW</span><p>@current.ReviewQuestion</p></div>
-        <h3>Run history</h3>
+        <h3>Run history</h3><a href="/history">Browse all runs and compare evidence</a>
         @if (!runs.Any(r => r.TestId == current.Id))
         { <div class="empty-state"><span aria-hidden="true">◷</span><strong>A fresh start</strong><p>Your first run will appear here with its screenshots and results.</p></div> }
         @foreach (var run in runs.Where(r => r.TestId == current.Id).Take(12))
@@ -73,7 +73,7 @@
         try { while (await timer.WaitForNextTickAsync(stop.Token)) await InvokeAsync(() => { Refresh(); StateHasChanged(); }); }
         catch (OperationCanceledException) { }
     }
-    private void Refresh() { runs = Store.List(); writerConfigured = Store.Profile("writerapp") is not null; companyConfigured = Store.Profile("virtual-company") is not null; }
+    private void Refresh() { runs = Catalogue.Value.Tests.SelectMany(t => Store.History(size: 12, test: t.Id).Items).OrderByDescending(r => r.CreatedAt).ToList(); writerConfigured = Store.Profile("writerapp") is not null; companyConfigured = Store.Profile("virtual-company") is not null; }
     private bool CanRun(UatTest test) => test.Readiness == "ready" || (test.Adapter == "writerapp-create-save" && writerConfigured) || (test.Adapter == "virtual-company-test-setup" && companyConfigured);
     private void Select(UatTest test) => selectedTest = test;
     private string AppName(string id) => Catalogue.Value.Applications.First(a => a.Id == id).Name;

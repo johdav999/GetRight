@@ -2,6 +2,8 @@
 @inject RunStore Store
 @inject UatCatalogue Catalogue
 @inject NavigationManager Navigation
+@inject ApplicationSetup Setup
+@implements IAsyncDisposable
 
 <PageTitle>Run review · Getright</PageTitle>
 <div class="topbar"><a href="/">Test control room</a><span>Run review</span></div>
@@ -13,8 +15,16 @@ else
     <div class="run-summary"><span>Automated result <span class="badge @run.Status">@Home.Label(run.Status)</span></span><span>User acceptance <span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></span></div>
     @if (run.ImprovementJobId is { } jobId) { <p class="notice">This is a regression run from <a href="/jobs/@jobId">improvement job @jobId[..8]</a>. <a href="/runs/@run.ParentRunId">View the original run</a>.</p> }
     @if (run.Status is "queued" or "running")
-    { <div class="notice">@(run.Status == "queued" ? "Waiting for the local worker. Start it from the repository with npm run start --prefix worker." : "The browser test is running. Refresh this page to see its result.")</div> }
-    <dl class="metadata"><div><dt>Tested build</dt><dd>@(run.BuildVersion ?? "Not recorded yet")</dd></div><div><dt>Fixture</dt><dd>@run.FixtureId</dd></div><div><dt>Environment</dt><dd>@(run.BaseUrl ?? "Not recorded yet")</dd></div><div><dt>Trace</dt><dd>@if (run.Trace is { } trace) { <a href="/api/evidence/@trace">Download Playwright trace</a> } else { <span>No trace available</span> }</dd></div></dl>
+    { <div class="notice">@(run.Status == "queued" ? "Waiting for the local worker. Start it from the repository with npm run start --prefix worker." : "The browser test is running. Results refresh automatically.")</div> }
+    <div class="review-actions">
+    @if (run.Status is "queued" or "running" && run.ImprovementJobId is null) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || run.CancelRequested)" @onclick="Cancel">Cancel run</button> }
+    @if (run.Status is not ("queued" or "running")) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || queueing)" @onclick="Again">Run again</button> }
+    <a href="/history">Browse and compare runs</a>
+    @if(run.ParentRunId is {} parent) { <a href="/compare?before=@parent&after=@run.Id">Compare with original</a> }
+    </div>
+    @if(run.CancelRequested && run.Status == "running") { <p role="status">Cancellation requested. Waiting for the browser worker to stop.</p> }
+    @if(run.EvidenceRetiredAt is not null) { <div class="notice">Evidence retired at @run.EvidenceRetiredAt.Value.ToLocalTime().ToString("g"). Results, feedback and review history are retained.</div> }
+    <dl class="metadata"><div><dt>Tested build</dt><dd>@(run.BuildVersion ?? "Not recorded yet")</dd></div><div><dt>Fixture</dt><dd>@run.FixtureId</dd></div><div><dt>Environment</dt><dd>@(run.BaseUrl ?? "Not recorded yet")</dd></div><div><dt>Trace</dt><dd>@if (run.EvidenceRetiredAt is null && run.Trace is { } trace) { <a href="/api/evidence/@trace">Download Playwright trace</a> } else { <span>No trace available</span> }</dd></div></dl>
     @if (run.Error is not null) { <div class="notice error" role="alert">@run.Error</div> }
     @if (run.Target is { } target)
     { <div class="run-summary"><span>Expected build: <strong>@target.ExpectedBuildVersion</strong></span><span>UAT account: <strong>@target.ExpectedUserId</strong></span><span>Evidence: <strong>@(run.Identity?.EvidenceKind ?? "Not verified yet")</strong></span><span>@(run.ApplicationId == "virtual-company" ? "Company" : "Document"): <strong>@(run.Identity?.CompanyId ?? run.Identity?.DocumentId ?? "Not created yet")</strong></span><span>Roles: <strong>@string.Join(", ", run.Identity?.Roles ?? [])</strong></span></div> }
@@ -24,7 +34,7 @@ else
         {
             var result = run.Steps.FirstOrDefault(s => s.StepId == step.Id);
             <article class="evidence-step"><div class="step-title"><h3>@step.Title</h3><span class="badge @(result?.Status ?? "not-run")">@Home.Label(result?.Status ?? "not-run")</span></div><p>@step.Expected</p>
-                @if (result?.Screenshot is { } shot) { <a href="/api/evidence/@shot" target="_blank"><img src="/api/evidence/@shot" alt="Screenshot for @step.Title" loading="lazy" /></a> }
+                @if (run.EvidenceRetiredAt is null && result?.Screenshot is { } shot) { <a href="/api/evidence/@shot" target="_blank"><img src="/api/evidence/@shot" alt="Screenshot for @step.Title" loading="lazy" /></a> }
                 @if (result?.Error is { } stepError) { <p class="error-text">@stepError</p> }
             </article>
         }
@@ -39,8 +49,11 @@ else
         @if (error is not null) { <p class="error-text" role="alert">@error</p> }
         @if (notice is not null) { <p role="status">@notice</p> }
         @foreach (var feedback in feedbacks)
-        { <article class="feedback"><span class="mini-label">@feedback.StepId · @feedback.CreatedAt.ToLocalTime().ToString("g")</span><p>@feedback.Comment</p><strong>@feedback.RequestedOutcome</strong><a href="/api/runs/@run.Id/tasks/@feedback.Id">Download task prompt</a><button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => Prepare(feedback)">Prepare Codex job</button><details><summary>Preview task</summary><pre>@feedback.Prompt</pre></details></article> }
+        { <article class="feedback" id="feedback-@feedback.Id"><span class="mini-label">@feedback.StepId · @feedback.CreatedAt.ToLocalTime().ToString("g")</span><p>@feedback.Comment</p><strong>@feedback.RequestedOutcome</strong><a href="/api/runs/@run.Id/tasks/@feedback.Id">Download task prompt</a><button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => Prepare(feedback)">Prepare Codex job</button><details><summary>Preview task</summary><pre>@feedback.Prompt</pre></details></article> }
         @foreach (var job in linkedJobs) { <a class="history-row" href="/jobs/@job.Id"><strong>Improvement job @job.Id[..8]</strong><span class="badge @job.Status">@Home.Label(job.Status)</span></a> }
+        <h3>Review history</h3><p class="muted">Decisions by this local reviewer. Earlier decisions made before audit history was enabled are not reconstructed.</p>
+        @foreach(var item in reviews) { <p class="review-event"><span class="mini-label">@item.CreatedAt.ToLocalTime().ToString("g") · @item.Action</span><br />@Home.Label(item.Previous) → @Home.Label(item.Current) @if(item.FeedbackId is {} feedbackId) { <a href="#feedback-@feedbackId">Feedback</a> }</p> }
+        @if(moreReviews) { <button class="secondary" @onclick="MoreReviews">Load more review events</button> }
         <div class="notice">Prepare a job to review and edit its task. Codex starts only when you select Implement improvement on the job page.</div>
     </section>
     </div>
@@ -53,11 +66,15 @@ else
     private List<ImprovementJob> linkedJobs = [];
     private string stepId = "", comment = "", outcome = "";
     private string? error, notice;
+    private List<ReviewEvent> reviews = [];
+    private bool moreReviews, queueing;
+    private readonly CancellationTokenSource stop = new();
+    private Task? polling;
     private bool InProgress => !RendererInfo.IsInteractive || run?.Status is "queued" or "running";
-    protected override void OnParametersSet() { stepId = ""; Load(); }
+    protected override void OnParametersSet() { stepId = ""; Load(); polling ??= Poll(); }
     private void Load()
     {
-        try { run = Store.Get(Id); feedbacks = Store.FeedbackFor(Id); linkedJobs = Store.Jobs().Where(j => j.OriginalRunId == Id).ToList(); if (stepId == "") stepId = run.TestSnapshot.Steps[0].Id; error = null; }
+        try { run = Store.Get(Id); feedbacks = Store.FeedbackFor(Id); linkedJobs = Store.JobsForRun(Id); reviews = Store.ReviewHistory(Id); moreReviews = reviews.Count == 50; if (stepId == "") stepId = run.TestSnapshot.Steps[0].Id; error = null; }
         catch (ArgumentException exception) { run = null; error = exception.Message; }
     }
     private void Review(string acceptance)
@@ -75,4 +92,13 @@ else
         try { var job = Store.CreateJob(Id, feedback.Id); Navigation.NavigateTo($"/jobs/{job.Id}"); }
         catch (ArgumentException exception) { error = exception.Message; }
     }
+    private void MoreReviews() { var next = Store.ReviewHistory(Id, reviews.LastOrDefault()?.Sequence ?? 0); reviews.AddRange(next); moreReviews = next.Count == 50; }
+    private void Cancel() { try { run = Store.CancelRun(Id); } catch(ArgumentException exception) { error = exception.Message; } }
+    private async Task Again() { queueing = true; try { var fresh = await Setup.Queue(run!.TestId); Navigation.NavigateTo($"/runs/{fresh.Id}"); } catch(ArgumentException exception) { error = exception.Message; } finally { queueing = false; } }
+    private async Task Poll() {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try { while (await timer.WaitForNextTickAsync(stop.Token)) if(run?.Status is "running" or "queued") await InvokeAsync(() => { Load(); StateHasChanged(); }); }
+        catch(OperationCanceledException) { }
+    }
+    public async ValueTask DisposeAsync() { await stop.CancelAsync(); if(polling is not null) await polling; stop.Dispose(); }
 }

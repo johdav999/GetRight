@@ -1,0 +1,43 @@
+@page "/history"
+@inject RunStore Store
+@inject UatCatalogue Catalogue
+
+<PageTitle>Run history · Getright</PageTitle>
+<div class="topbar"><a href="/">Test control room</a><span>Run history</span></div>
+<header class="page-header"><div><p class="eyebrow">RESULTS AND DECISIONS</p><h1>Run history</h1><p class="muted">Find earlier runs and compare their evidence. Each run keeps its own acceptance.</p></div><button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="Reset">Refresh history</button></header>
+<section class="panel review-panel">
+    <div class="history-filters">
+        <div><label for="history-app">Application</label><select id="history-app" @bind="application" @bind:after="Reset" disabled="@(!RendererInfo.IsInteractive)"><option value="">All applications</option>@foreach(var app in Catalogue.Value.Applications) { <option value="@app.Id">@app.Name</option> }</select></div>
+        <div><label for="history-status">Result</label><select id="history-status" @bind="status" @bind:after="Reset" disabled="@(!RendererInfo.IsInteractive)"><option value="">All results</option>@foreach(var state in new[]{"queued","running","passed","failed","cancelled","interrupted"}) { <option value="@state">@Home.Label(state)</option> }</select></div>
+        <div><label for="history-acceptance">Acceptance</label><select id="history-acceptance" @bind="acceptance" @bind:after="Reset" disabled="@(!RendererInfo.IsInteractive)"><option value="">All decisions</option>@foreach(var state in new[]{"pending","accepted","improvements-requested"}) { <option value="@state">@Home.Label(state)</option> }</select></div>
+    </div>
+    <p>@result.Total runs · page @(page)</p>
+    @foreach(var run in result.Items)
+    { <article class="history-row"><a href="/runs/@run.Id"><strong>@run.TestSnapshot.Title</strong><small>@run.CreatedAt.ToLocalTime().ToString("g") · @run.Id[..8] · @run.BuildVersion</small></a><span class="badge @run.Status">@Home.Label(run.Status)</span><span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span><button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => Select(run)">@(before == run.Id ? "Selected" : "Compare")</button></article> }
+    @if (result.Total == 0) { <p>No runs match these filters.</p> }
+    <div class="review-actions"><button class="secondary" disabled="@(!RendererInfo.IsInteractive || page == 1)" @onclick="Previous">Previous page</button><button class="secondary" disabled="@(!RendererInfo.IsInteractive || page * 20 >= result.Total)" @onclick="Next">Next page</button></div>
+    @if (before is not null) { <p role="status">Choose another run of the same test to compare. <button class="text-button" @onclick="() => before = null">Clear selection</button></p> }
+    @if (error is not null) { <p role="alert" class="error-text">@error</p> }
+</section>
+
+@code {
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+    private PageResult<UatRun> result = new([], 0, 1, 20);
+    private string application = "", status = "", acceptance = "";
+    private string? before, error;
+    private int page = 1;
+    private long? snapshot;
+    protected override void OnInitialized() => Load();
+    private void Load() { result = Store.History(page, application: Empty(application), status: Empty(status), acceptance: Empty(acceptance), snapshot: snapshot); snapshot = result.Snapshot; }
+    private static string? Empty(string value) => value == "" ? null : value;
+    private void Reset() { page = 1; snapshot = null; Load(); }
+    private void Next() { page++; Load(); }
+    private void Previous() { page--; Load(); }
+    private void Select(UatRun run) {
+        error = null;
+        if (before is null) before = run.Id;
+        else if (before == run.Id) before = null;
+        else if (Store.Get(before).TestId != run.TestId) error = "Choose two runs of the same test.";
+        else Navigation.NavigateTo($"/compare?before={before}&after={run.Id}");
+    }
+}

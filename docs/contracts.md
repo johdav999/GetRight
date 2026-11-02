@@ -11,9 +11,9 @@ No CORS policy is enabled.
 | GET | `/api/health` | Getright name, running assembly version and local mode. |
 | GET | `/api/catalog` | Applications and test definitions. |
 | GET | `/api/applications/{id}/profile` | Local profile or null; no credentials. |
-| POST | `/api/applications/{id}/profile` | Save WriterApp URL, expected version/account and isolation confirmation. |
+| POST | `/api/applications/{id}/profile` | Save application URL, expected build/account, company/role if applicable, and isolation confirmation. |
 | GET | `/api/applications/{id}/readiness` | Read-only checks of the running version/account. |
-| GET | `/api/runs` | All runs, newest first; excludes worker lease. |
+| GET | `/api/runs` | Latest 100 runs, newest first; excludes worker lease. Use paginated history for older runs. |
 | GET | `/api/runs/{id}` | Run snapshot and current human acceptance. |
 | POST | `/api/runs` | Queue `{ "testId": "getright-save-note" }`. |
 | POST | `/api/worker/claim` | Oldest queued run with private lease, or 204. |
@@ -110,3 +110,33 @@ starts pending. Successful job completion requires a passing linked rerun.
 
 Artifact names are limited to `codex.log`, `build.log`, `launch.log`, `diff.patch`
 and `summary.json`. Original feedback and run evidence remain available separately.
+
+## Operational routes (schema 4)
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| GET | `/api/history?page=1&pageSize=20` | Run page with `items`, `total`, `page`, `pageSize`, `snapshot`; optional `test`, `application`, `status`, `acceptance`. |
+| GET | `/api/job-history?page=1&pageSize=20` | Job page; optional application/status filters. |
+| POST | `/api/runs/{id}/heartbeat` | Renew `{ "lease": "..." }` and return cancellation state. |
+| POST | `/api/runs/{id}/cancel` | Cancel queued run or request running cancellation; linked runs use the owning job. |
+| GET | `/api/runs/{id}/reviews?after=0` | Up to 50 immutable decision events, ascending sequence. |
+| GET | `/api/maintenance/preview?days=30` | First batch of eligible evidence/worktree candidates; no mutation. |
+| GET | `/api/maintenance/preview-page?days=30&page=1` | Candidate batch plus `hasMore`; scans at most 200 resources of each kind per page. |
+| GET | `/api/maintenance/history?page=1` | Paged cleanup journal. |
+| GET | `/api/maintenance/tasks` | Latest 100 cleanup tasks, without leases. |
+| POST | `/api/maintenance/tasks` | Explicit `{ "kind": "evidence", "resourceId": "...", "token": "...", "retentionDays": 30 }` from a current preview. |
+| POST | `/api/maintenance/tasks/{id}/cancel` | Cancel a queued removal before claim. |
+| POST | `/api/worker/cleanup/claim` | Claim an explicitly queued removal or 204. |
+| POST | `/api/maintenance/tasks/{id}/heartbeat` | Renew the private cleanup lease. |
+| POST | `/api/maintenance/tasks/{id}/finish` | Acknowledge completed/failed/interrupted cleanup. |
+
+History page sizes are 1–100. Pass the returned `snapshot` on subsequent run/job
+page requests to exclude later inserts from that browsing session; omit it to
+refresh. The recent `/api/jobs` endpoint is also capped at 100. Individual IDs
+remain directly readable regardless of pagination.
+
+Run completions accept passed, failed, interrupted and requested cancellation.
+Requested cancellation wins over a late pass. Any expired lease rejects writes.
+Retired evidence returns 404 while metadata, review events and feedback remain.
+Worktree cleanup retains the branch and result commit. See [operations](operations.md)
+for preview protection, process supervision and recovery details.

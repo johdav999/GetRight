@@ -163,3 +163,7 @@ adapter builds the actual Web/API with a Getright-owned SQLite harness, launches
 a fresh company fixture and verifies company/owner identity. The default build
 timeout is ten minutes for this larger application (a configured global timeout
 still takes precedence). See [Virtual Company UAT](virtual-company-uat.md).
+
+Milestone 4 adds shared run supervision, paginated history and explicit reviewed
+worktree cleanup. Retained branches/commits and logs survive worktree removal.
+See [Local operations and recovery](operations.md).

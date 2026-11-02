@@ -41,7 +41,8 @@ with fresh data. The resulting run always awaits human acceptance.
 Ctrl+C stops the launcher's owned processes. Each job stops its changed host
 after its regression run. Databases are in memory and are discarded on shutdown;
 screenshots, traces, receipts, logs, worktrees and local commits remain for review.
-Retained worktree removal and evidence retention are milestone 4 work.
+Reviewed improvement-job worktrees and evidence can be explicitly cleaned through
+[Local storage](operations.md). Detached launcher baselines remain for manual Git review.
 
 ## Product profile and fixture boundary
 

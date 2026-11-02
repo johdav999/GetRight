@@ -22,9 +22,9 @@ flowchart LR
 
 `src/Getright.Dashboard` hosts interactive server-rendered pages and a small JSON
 API. `RunStore` serializes mutations and uses SQLite WAL with parameterized SQL.
-Schema version 3 retains runs, feedback and application profiles, and adds
-improvement jobs, incremental events and private expiring job leases. Startup
-migrates schemas 1 and 2 transactionally, preserving legacy payloads. Newer
+Schema version 4 retains runs, feedback, application profiles, improvement jobs
+and events; it adds run heartbeat expiry, review audit and cleanup journals. Startup
+migrates schemas 1–3 transactionally, preserving legacy payloads. Newer
 schemas are rejected instead of being downgraded. Future changes require migrations.
 
 `config/catalog.json` is copied into the dashboard build and published output.
@@ -57,7 +57,7 @@ tracked source fail attribution checks.
 
 ```text
 data/
-  getright.db             # runs, feedback, profiles, jobs and events, schema version 3
+  getright.db             # runs, feedback, profiles, jobs and events, schema version 4
   keys/                   # local ASP.NET keys, protected with DPAPI on Windows
   evidence/<run-id>/
     open.png
@@ -69,21 +69,22 @@ data/
   jobs/<job-id>/          # bounded logs, diff, summary and changed host data
 ```
 
-Automated state: `queued → running → passed | failed | interrupted`.
+Automated state: `queued → running → passed | failed | cancelled | interrupted`.
 
 Acceptance state: `pending | accepted | improvements-requested`.
 
 Review decisions apply only to completed runs. Adding feedback marks that run as
 improvements requested in the same transaction as feedback persistence. Reviews
 can be changed; test results, test snapshots and existing feedback are retained.
-Each new run starts pending. Review audit history and feedback editing are future
-work. History displays the latest 12 runs per test; all runs remain in SQLite.
+Each new run starts pending. Review and feedback-induced decision changes append
+transactional audit events. History is paginated; Home displays the latest 12 runs
+per test. Metadata remains in SQLite after explicitly selected evidence cleanup.
 
 Claims use a private lease that is never returned by ordinary run reads. Duplicate
 claims, mismatched leases, duplicate completions and incomplete passing results
-are rejected. Dashboard restart invalidates running leases. Claims sweep work
-older than ten minutes into interrupted. Standalone UAT runs have no heartbeat or
-automatic retry yet, so their adapters must stay within the lease duration.
+are rejected. Dashboard restart invalidates running leases. Run, job and cleanup leases expire after 45 seconds and renew every five seconds.
+A background monitor recovers expired leases. Standalone runs have a bounded
+deadline and cancel their browsers on shutdown, cancellation or lost ownership.
 
 ## Trust boundary
 
@@ -127,7 +128,7 @@ it never accepts the application change on the user's behalf.
 Job leases last 45 seconds and are renewed every five seconds. Cancellation aborts
 owned operations; shutdown, restart and lost leases retain an interrupted job.
 Any owned in-flight regression run becomes interrupted and rejects stale completion.
-The normal UAT queue retains its separate ten-minute run lease. See
+Standalone UAT and cleanup tasks also use renewable leases. See
 [improvement jobs](improvement-jobs.md) for the lifecycle and validation scope.
 
 Virtual Company uses the same run/job contract with optional company and role fields.
@@ -135,3 +136,6 @@ Its Getright-owned host composes the actual API through the repository test fact
 and a fresh in-memory SQLite database, with a real Blazor Web UI. A local gateway
 checks the owned Web binary and forwards Blazor WebSockets. See
 [Virtual Company UAT](virtual-company-uat.md) for runtime attribution and limits.
+
+[Local operations](operations.md) describes paginated review, comparisons, child
+process ownership, explicit retention and Git worktree cleanup boundaries.

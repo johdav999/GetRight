@@ -3,11 +3,12 @@ import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { api } from './settings.mjs';
 import { writerAppAdapter } from './writerapp.mjs';
+import { supervise } from './supervision.mjs';
 import { virtualCompanyAdapter } from './virtual-company.mjs';
 
 // Adapter IDs are allowlisted in source. The API cannot submit executable code,
 // shell commands or arbitrary navigation targets to this local worker.
-export async function executeRun(claim, configuration) {
+async function performRun(claim, configuration) {
   configuration.signal?.throwIfAborted();
   const { run, lease } = claim;
   if (!/^[a-f0-9]{32}$/.test(run.id) || run.fixtureId !== `uat-${run.id}`) throw new Error('Invalid run identity.');
@@ -98,6 +99,26 @@ export async function executeRun(claim, configuration) {
     await browser?.close().catch(() => {});
     configuration.signal?.removeEventListener('abort', abortBrowser);
   }
-  configuration.signal?.throwIfAborted();
-  return api(configuration.dashboardUrl, `/api/runs/${run.id}/complete`, result);
+  return result;
+}
+
+export async function executeRun(claim, configuration) {
+  const route = `/api/runs/${claim.run.id}`;
+  let result;
+  const supervision = supervise({ configuration, heartbeat: `${route}/heartbeat`, lease: claim.lease,
+    timeoutMs: configuration.runTimeoutMs ?? 180000, cancellation: true });
+  try {
+    await supervision.ready;
+    result = await performRun(claim, { ...configuration, signal: supervision.signal });
+  } catch (error) { result = { lease: claim.lease, status: 'failed', steps: [], error: error.message }; }
+  finally { await supervision.stop(); }
+  if (supervision.signal.aborted) {
+    result.status = supervision.cancelled ? 'cancelled' : supervision.timedOut ? 'failed' : 'interrupted';
+    result.error = String(supervision.signal.reason?.message || 'The run was interrupted.');
+  }
+  try { return await api(configuration.dashboardUrl, `${route}/complete`, result); }
+  catch (error) {
+    try { const stored = await api(configuration.dashboardUrl, route); if (!['queued', 'running'].includes(stored.status)) return stored; } catch { }
+    throw new Error(`Could not acknowledge run completion; its lease will recover as interrupted. ${error.message}`);
+  }
 }

@@ -1,0 +1,34 @@
+@page "/compare"
+@inject RunStore Store
+
+<PageTitle>Compare runs · Getright</PageTitle>
+<div class="topbar"><a href="/history">Run history</a><span>Comparison</span></div>
+<header class="page-header"><div><p class="eyebrow">EVIDENCE SIDE BY SIDE</p><h1>Compare runs</h1><p class="muted">Automated results and human decisions belong to each run independently.</p></div></header>
+@if (error is not null) { <p role="alert">@error</p> }
+else if (before is not null && after is not null)
+{
+    <section class="panel comparison">
+        <div class="compare-images comparison-summary">
+        @foreach (var run in new[] { before, after })
+        { <div><h2><a href="/runs/@run.Id">Run @run.Id[..8]</a></h2><p>@run.CreatedAt.ToLocalTime().ToString("g")</p><p>Build: @(run.BuildVersion ?? "Not recorded")</p><p>Source: @(run.Target?.SourceCommit ?? "Not recorded")</p><p><span class="badge @run.Status">@Home.Label(run.Status)</span> <span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></p>@if (run.EvidenceRetiredAt is not null) { <p>Evidence retired; run history retained.</p> }</div> }
+        </div>
+        @foreach(var stepId in before.TestSnapshot.Steps.Select(s => s.Id).Union(after.TestSnapshot.Steps.Select(s => s.Id)))
+        {
+            <article class="comparison-step"><h3>@(before.TestSnapshot.Steps.FirstOrDefault(s => s.Id == stepId)?.Title ?? after.TestSnapshot.Steps.First(s => s.Id == stepId).Title)</h3><div class="compare-images">
+            @foreach(var run in new[]{before, after})
+            { var step = run.Steps.FirstOrDefault(s => s.StepId == stepId); <div><p class="mini-label">RUN @run.Id[..8] · @run.BuildVersion</p><p>@Home.Label(step?.Status ?? "not-run")</p>@if(run.EvidenceRetiredAt is null && step?.Screenshot is {} shot && Store.EvidencePath(run.Id, shot.Split('/')[1]) is {} file && System.IO.File.Exists(file)) { <a href="/api/evidence/@shot" target="_blank"><img src="/api/evidence/@shot" alt="Run @run.Id[..8], step @stepId" loading="lazy" /></a> } else { <p>No retained screenshot.</p> }@if(step?.Error is {} failure) { <p class="error-text">@failure</p> }</div> }
+            </div></article>
+        }
+    </section>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name="before")] public string? BeforeId {get;set;}
+    [SupplyParameterFromQuery(Name="after")] public string? AfterId {get;set;}
+    private UatRun? before, after;
+    private string? error;
+    protected override void OnParametersSet() {
+        try { before = Store.Get(BeforeId ?? ""); after = Store.Get(AfterId ?? ""); if (before.TestId != after.TestId || before.Id == after.Id) throw new ArgumentException("Select two different runs of the same test from history."); error = null; }
+        catch(ArgumentException exception) { error = exception.Message; }
+    }
+}

@@ -4,19 +4,26 @@
 
 <PageTitle>Improvement jobs · Getright</PageTitle>
 <div class="topbar"><a href="/">Test control room</a><span>Improvement jobs</span></div>
-<header class="page-header"><div><p class="eyebrow">FEEDBACK → IMPLEMENTATION → REGRESSION</p><h1>Improvement jobs</h1><p class="muted">Follow each change from the original feedback to its new test evidence.</p></div><button class="secondary" @onclick="Load">Refresh jobs</button></header>
+<header class="page-header"><div><p class="eyebrow">FEEDBACK → IMPLEMENTATION → REGRESSION</p><h1>Improvement jobs</h1><p class="muted">Follow each change from the original feedback to its new test evidence.</p></div><button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="Refresh">Refresh jobs</button></header>
 <section class="panel">
+    <p>@total jobs · page @(page)</p>
     @if (jobs.Count == 0) { <div class="empty-state"><strong>No improvement jobs yet</strong><p>Open a completed run, add feedback, then select Prepare Codex job.</p></div> }
     @foreach (var job in jobs)
     { <a class="history-row" href="/jobs/@job.Id"><div><strong>@job.ApplicationId · @job.Id[..8]</strong><small>@job.CreatedAt.ToLocalTime().ToString("g") · original run @job.OriginalRunId[..8]</small></div><span class="badge @job.Status">@Home.Label(job.Status)</span>@if(job.CancelRequested) { <span>Cancellation requested</span> }</a> }
+<div class="review-actions"><button class="secondary" disabled="@(!RendererInfo.IsInteractive || page == 1)" @onclick="Previous">Previous page</button><button class="secondary" disabled="@(!RendererInfo.IsInteractive || page * 20 >= total)" @onclick="Next">Next page</button></div>
 </section>
 
 @code {
     private List<ImprovementJob> jobs = [];
+    private int page = 1, total;
+    private long? snapshot;
     private readonly CancellationTokenSource stop = new();
     private Task? polling;
     protected override void OnInitialized() { Load(); polling = Poll(); }
-    private void Load() => jobs = Store.Jobs();
+    private void Load() { var result = Store.JobHistory(page, snapshot: snapshot); snapshot = result.Snapshot; jobs = result.Items; total = result.Total; }
+    private void Refresh() { page = 1; snapshot = null; Load(); }
+    private void Next() { page++; Load(); }
+    private void Previous() { page--; Load(); }
     private async Task Poll()
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));

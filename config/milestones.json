@@ -13,6 +13,6 @@
   },
   {
     "title": "4 — Operational polish and reliability",
-    "description": "Add worker heartbeat and cancellation, recovery, review audit history, pagination, evidence retention, before/after comparison and worktree cleanup. Validate failure paths and everyday usability. Add authenticated remote hosting only if it becomes a requirement. Complete when the local app can be operated reliably through failures and repeated UAT cycles."
+    "description": "Implemented standalone run heartbeat, cancellation, deadlines, background recovery and owned process supervision; transactional review audit; paginated history and run comparison; explicit evidence retention and reviewed clean worktree cleanup with recovery journals. Validated repeated cycles, worker death, stale leases, restart, partial cleanup, dirty/path refusal and desktop/mobile flows. Local-only operation; remote authentication remains conditional on future hosting."
   }
 ]

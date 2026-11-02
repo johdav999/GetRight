@@ -1,0 +1,45 @@
+@page "/maintenance"
+@inject RunStore Store
+
+<PageTitle>Local storage · Getright</PageTitle>
+<div class="topbar"><a href="/">Test control room</a><span>Local storage</span></div>
+<header class="page-header"><div><p class="eyebrow">KEEP HISTORY, RELEASE DISK SPACE</p><h1>Local storage</h1><p class="muted">Preview eligible evidence and worktrees, then explicitly queue one cleanup at a time.</p></div></header>
+<section class="panel review-panel">
+    <h2>Cleanup preview</h2><p>Only accepted runs older than the retention period qualify. Active tasks and pending reviews protect their evidence. Clean worktrees become eligible after their job stops and the new run is accepted; failed jobs still require a clean worktree.</p>
+    <label for="retention-days">Keep evidence for at least this many days</label><input id="retention-days" type="number" min="1" max="3650" @bind="days" disabled="@(!RendererInfo.IsInteractive)" />
+    <button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="Preview">Preview cleanup</button>
+    @foreach(var candidate in candidates)
+    { <article class="feedback"><span class="mini-label">@candidate.Kind</span><p>@candidate.Description</p>@if(candidate.Bytes is {} bytes) { <p>@((bytes / 1024d / 1024).ToString("N2")) MB</p> }<button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => selected = candidate">Select for removal</button></article> }
+    @if(previewed) { <div class="review-actions"><button class="secondary" disabled="@(!RendererInfo.IsInteractive || batchPage == 1)" @onclick="PreviousBatch">Previous batch</button><span>Preview batch @batchPage</span><button class="secondary" disabled="@(!RendererInfo.IsInteractive || !hasMore)" @onclick="NextBatch">Next batch</button></div> }
+    @if (previewed && candidates.Count == 0) { <p>No eligible resources in this batch. Pending reviews and active jobs are preserved.</p> }
+    @if (selected is {} item)
+    { <div class="notice"><strong>Confirm this removal</strong><p>@item.Description</p><p>@(item.Kind == "evidence" ? "Screenshots and traces will become unavailable. Run results, feedback and review history are retained." : "Only the registered clean worktree will be removed. Its local branch, result commit and job logs are retained.")</p><button disabled="@(!RendererInfo.IsInteractive)" @onclick="Confirm">Queue removal</button><button class="text-button" @onclick="() => selected = null">Keep it</button></div> }
+    @if(error is not null) { <p role="alert" class="error-text">@error</p> }
+    @if(notice is not null) { <p role="status">@notice</p> }
+    <h2>Cleanup journal</h2><p class="muted">Start the local worker to process queued removals. Failed or interrupted removals can be previewed and retried; modified worktrees are never forced.</p>
+    <button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="RefreshJournal">Refresh journal</button>
+    @foreach(var task in tasks) { <article class="feedback"><strong>@task.Kind · @task.ResourceId[..8]</strong><p><span class="badge @task.Status">@Home.Label(task.Status)</span> · @task.UpdatedAt.ToLocalTime().ToString("g")</p>@if(task.Status == "queued") { <button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => Cancel(task.Id)">Cancel queued removal</button> }@if(task.Error is {} failure) { <p class="error-text">@failure</p> }</article> }
+<div class="review-actions"><button class="secondary" disabled="@(!RendererInfo.IsInteractive || journalPage == 1)" @onclick="PreviousJournal">Previous journal page</button><span>Page @journalPage</span><button class="secondary" disabled="@(!RendererInfo.IsInteractive || journalPage * 20 >= totalTasks)" @onclick="NextJournal">Next journal page</button></div>
+</section>
+
+@code {
+    private int days = 30;
+    private List<CleanupCandidate> candidates = [];
+    private List<CleanupTask> tasks = [];
+    private CleanupCandidate? selected;
+    private bool previewed, hasMore;
+    private int batchPage = 1, journalPage = 1, totalTasks;
+    private string? error, notice;
+    private long? journalSnapshot;
+    protected override void OnInitialized() => Load();
+    private void Load() { var result = Store.CleanupHistory(journalPage, journalSnapshot); journalSnapshot = result.Snapshot; tasks = result.Items; totalTasks = result.Total; }
+    private void RefreshJournal() { journalPage = 1; journalSnapshot = null; Load(); }
+    private void Cancel(string id) { try { Store.CancelCleanup(id); error = null; RefreshJournal(); } catch(ArgumentException exception) { error = exception.Message; } }
+    private void PreviousJournal() { journalPage--; Load(); }
+    private void NextJournal() { journalPage++; Load(); }
+    private void PreviousBatch() { batchPage--; LoadPreview(); }
+    private void NextBatch() { batchPage++; LoadPreview(); }
+    private void Preview() { batchPage = 1; LoadPreview(); }
+    private void LoadPreview() { try { var result = Store.PreviewCleanupBatch(days,batchPage); candidates = result.Items; hasMore = result.HasMore; selected = null; previewed = true; error = null; Load(); } catch(ArgumentException exception) { error = exception.Message; } }
+    private void Confirm() { if(selected is not {} item) return; try { Store.RequestCleanup(new(item.Kind,item.ResourceId,item.Token,days)); RefreshJournal(); Preview(); notice = "Removal queued. The local worker will recheck the resource before removing it."; } catch(ArgumentException exception) { error = exception.Message; } }
+}
