@@ -9,6 +9,9 @@ No CORS policy is enabled.
 | --- | --- | --- |
 | GET | `/api/health` | Getright name, running assembly version and local mode. |
 | GET | `/api/catalog` | Applications and test definitions. |
+| GET | `/api/applications/{id}/profile` | Local profile or null; no credentials. |
+| POST | `/api/applications/{id}/profile` | Save WriterApp URL, expected version/account and isolation confirmation. |
+| GET | `/api/applications/{id}/readiness` | Read-only checks of the running version/account. |
 | GET | `/api/runs` | All runs, newest first; excludes worker lease. |
 | GET | `/api/runs/{id}` | Run snapshot and current human acceptance. |
 | POST | `/api/runs` | Queue `{ "testId": "getright-save-note" }`. |
@@ -42,6 +45,12 @@ build identity and environment. Duplicate or unknown step IDs are rejected.
 Evidence references must resolve inside that run's directory and exist on disk.
 Failed results may have no evidence if the browser could not start. A failed
 step's error is retained separately from the run-level error.
+
+WriterApp runs include a frozen `target` profile. A successful completion must
+match its `baseUrl` and `expectedBuildVersion`, and include `identity` with the
+expected `userId`, created GUID `documentId`, `evidenceKind: "live-application"`
+and observed `roles`. Profiles are local SQLite state; edits affect future runs.
+Queueing and the worker both check the target before performing test actions.
 
 ## Feedback example
 

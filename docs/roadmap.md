@@ -1,54 +1,72 @@
-# Implementation roadmap
+# Four implementation milestones
 
-## M0 — Local foundation (included)
+The local demo, SQLite history, evidence capture and task export are the completed
+starter baseline. The four milestones below cover the remaining application.
+Their GitHub definitions are kept in `config/milestones.json`.
 
-- Blazor control room and run review.
-- SQLite test snapshots, automated results, acceptance and feedback.
-- Local Playwright worker, claim leases and restart interruption.
-- Four-step isolated demo, screenshots and trace.
-- Evidence-linked task export, five WriterApp drafts and a Virtual Company draft.
-- Windows build and browser smoke checks in CI.
+| Milestone | Outcome | Status |
+| --- | --- | --- |
+| [1 — WriterApp UAT](https://github.com/johdav999/GetRight/milestone/1) | Five repeatable workflows against isolated WriterApp data, with build/account checks and reviewable evidence. | In progress |
+| [2 — Feedback-to-fix cycle](https://github.com/johdav999/GetRight/milestone/2) | An editable task becomes a Codex worktree job, a verified build and a linked rerun. | Planned |
+| [3 — Virtual Company UAT](https://github.com/johdav999/GetRight/milestone/3) | The selected business workflow uses dedicated company data and the same UAT cycle. | Planned |
+| [4 — Operational polish and reliability](https://github.com/johdav999/GetRight/milestone/4) | Repeated cycles, cancellation, recovery, audit, cleanup and comparison work reliably. | Planned |
 
-## M1 — WriterApp adapter
+## 1 — WriterApp UAT
 
-1. Configure the repository, local server/client URLs and approved build/start
-   commands outside the test API. Keep machine paths in ignored local config.
-2. Provision a dedicated workspace and UAT identities. Isolate account state for
-   each browser, and keep Playwright auth state out of Git.
-3. Establish an application-reported build identity and ensure fixture UI checks
-   are explicitly distinguished from real persistence and collaboration checks.
-4. Implement create/save/reload against the actual WriterApp UI and data store.
-5. Adapt synopsis, edit/reopen, sharing and failed-save recovery one by one.
+- [x] Local application setup page and persistent configuration.
+- [x] Check the actual running version and dedicated test account before queueing.
+- [x] Freeze the target profile into each run, independently of later setup edits.
+- [x] An isolated WriterApp launcher with a new database, test identity and unique
+      assembly version; no source or normal application config changes.
+- [x] Implement the create/save/reopen adapter through the WriterApp UI, with
+      backend readback and per-step evidence.
+- [x] Verify that first adapter against an actual isolated WriterApp build.
+- [ ] Validate and accept all five workflows against actual WriterApp builds.
+- [ ] Implement synopsis with controlled provider responses.
+- [ ] Implement edits surviving navigation and reopening.
+- [ ] Implement sharing/acceptance using separate authenticated identities.
+- [ ] Implement failed-save recovery using a bounded, controlled failure.
 
-Reference starting points in the sibling checkout: `Tests/sharing-workspace.mjs`
-and `docs/writing-tools-redesign-uat.md`. Inspect the current source before
-adapting selectors. Do not copy a fixture script into Getright and label it live
-application acceptance. No source changes to WriterApp are part of M0.
+The first implementation slice supplies setup, preflight checks and the persistence
+adapter. Milestone 1 remains open until all five workflows are implemented and
+validated. Contract-host tests only test Getright; they are not WriterApp acceptance.
 
-Done when all five tests are repeatable and each run records login role, isolated
-data, actual running build and evidence. A user can watch and review each test.
+Acceptance: runs retain the runtime build, account, fixture, document identity,
+screenshots and trace. Wrong builds/accounts cannot create test data. New runs
+always await a fresh human decision. Established step IDs remain stable.
 
-## M2 — One feedback-to-fix cycle
+See [WriterApp setup](writerapp-uat.md) for running the current slice. Current
+starting references in the sibling checkout are `Tests/sharing-workspace.mjs`
+and `docs/writing-tools-redesign-uat.md`; inspect current source before adapting.
 
-1. Persist an editable improvement job linked to the original feedback/run.
-2. Explicitly start the job in a new Git worktree on the configured repository.
-3. Integrate the Codex SDK and stream progress/errors; retain thread and job IDs.
-4. Build the changed version with bounded commands and captured logs.
-5. Launch it on a separate port and require runtime identity to match the build.
-6. Rerun the original test with new data; connect original run → feedback → job →
-   resulting commit/build → rerun. Present old/new evidence for fresh acceptance.
+## 2 — Feedback-to-fix cycle
 
-Done when one real WriterApp improvement completes this cycle. Include failure,
-cancellation, worker restart and cleanup paths. No automatic merge or deployment.
+Persist editable improvement jobs linked to feedback and the original run. Start
+Codex only from an explicit Implement action, using a new Git worktree at a
+recorded base commit. Stream progress and errors, retain thread/job IDs, and
+capture bounded build/start logs. Verify the running changed version before
+rerunning the original test with fresh data. Present linked old/new evidence for
+a new human acceptance decision. Include cancellation and failure paths.
 
-## M3 — Virtual Company
+Acceptance: one real WriterApp improvement completes original run → feedback →
+job → resulting commit/build → rerun. No automatic merge, deployment or acceptance.
 
-Choose the first business workflow with the user. Define the local host, dedicated
-company fixture, identity/roles, observable business outcome and cleanup. Implement
-it through the same test/run/evidence contract, then expand to more workflows.
+## 3 — Virtual Company UAT
 
-## M4 — Operational features
+Choose the first business workflow with the user. Define its local host,
+dedicated company fixture, identities, roles, observable outcome and cleanup.
+Implement the adapter through the shared run/evidence contract and then exercise
+the feedback-to-fix cycle. Expand to further workflows after the first is accepted.
 
-Worker heartbeat/cancellation, review audit log, run pagination, evidence retention,
-before/after comparison, repository worktree cleanup, and authenticated remote
-dashboard/worker transport if centrally hosted operation becomes a requirement.
+Acceptance: the chosen business outcome is repeatable and isolated, evidence
+identifies the running build and role, and a user can review the complete cycle.
+
+## 4 — Operational polish and reliability
+
+Add worker heartbeat and cancellation, lease recovery, review audit history,
+pagination, evidence retention, before/after comparison and worktree cleanup.
+Exercise failure and restart paths and polish the real user flows. Add remote
+dashboard/worker authentication only if hosted operation becomes a requirement.
+
+Acceptance: the local app handles repeated UAT cycles, interrupted work, failed
+builds and cleanup without losing history or mixing acceptance between runs.

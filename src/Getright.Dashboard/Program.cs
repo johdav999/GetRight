@@ -11,6 +11,7 @@ builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddSingleton<UatCatalogue>();
 builder.Services.AddSingleton<RunStore>();
+builder.Services.AddSingleton<ApplicationSetup>();
 var protection = builder.Services.AddDataProtection()
     .SetApplicationName("Getright")
     .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(RunStore.ResolveDataPath(builder.Configuration), "keys")));
@@ -40,7 +41,14 @@ app.MapGet("/api/health", () => new { name = "Getright", version = AppJson.Build
 app.MapGet("/api/catalog", (UatCatalogue catalogue) => catalogue.Value);
 app.MapGet("/api/runs", (RunStore store) => store.List());
 app.MapGet("/api/runs/{id}", (string id, RunStore store) => store.Get(id));
-app.MapPost("/api/runs", (QueueRequest request, RunStore store) => Results.Created("/api/runs", store.Queue(request.TestId)));
+app.MapPost("/api/runs", async (QueueRequest request, ApplicationSetup setup, CancellationToken cancellationToken) => Results.Created("/api/runs", await setup.Queue(request.TestId, cancellationToken)));
+app.MapGet("/api/applications/{id}/profile", (string id, RunStore store) => Results.Ok(store.Profile(id)));
+app.MapPost("/api/applications/{id}/profile", (string id, ApplicationProfile profile, RunStore store) =>
+{
+    if (profile.ApplicationId != id) throw new ArgumentException("The profile belongs to a different application.");
+    return store.SaveProfile(profile);
+});
+app.MapGet("/api/applications/{id}/readiness", (string id, ApplicationSetup setup, CancellationToken cancellationToken) => setup.Check(id, cancellationToken));
 app.MapPost("/api/worker/claim", (RunStore store) => store.Claim() is { } lease ? Results.Ok(lease) : Results.NoContent());
 app.MapPost("/api/runs/{id}/complete", (string id, CompletionRequest request, RunStore store) => store.Complete(id, request));
 app.MapPost("/api/runs/{id}/review", (string id, ReviewRequest request, RunStore store) => store.Review(id, request.Acceptance));

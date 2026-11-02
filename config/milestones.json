@@ -1,0 +1,18 @@
+[
+  {
+    "title": "1 — WriterApp UAT",
+    "description": "Connect an isolated local WriterApp instance; verify runtime build and dedicated account; implement create/save/reopen, synopsis, edit/reopen, sharing/acceptance, and save-failure recovery. Record step evidence and fixture identities. Complete when all five workflows are repeatable and reviewable. Current work: configuration, preflight checks, and the first persistence adapter."
+  },
+  {
+    "title": "2 — Feedback-to-fix cycle",
+    "description": "Persist editable improvement jobs; execute Codex in isolated Git worktrees; stream progress; build and launch the changed app; verify runtime build identity; rerun the original test and link the evidence. Complete when one real WriterApp improvement completes the full cycle with fresh human acceptance. No automatic merge or deployment."
+  },
+  {
+    "title": "3 — Virtual Company UAT",
+    "description": "Choose the first business workflow, configure a dedicated company fixture and roles, implement its adapter and evidence capture, and exercise the shared feedback-to-fix cycle. Complete when a real business workflow is repeatable, isolated, and reviewable."
+  },
+  {
+    "title": "4 — Operational polish and reliability",
+    "description": "Add worker heartbeat and cancellation, recovery, review audit history, pagination, evidence retention, before/after comparison and worktree cleanup. Validate failure paths and everyday usability. Add authenticated remote hosting only if it becomes a requirement. Complete when the local app can be operated reliably through failures and repeated UAT cycles."
+  }
+]

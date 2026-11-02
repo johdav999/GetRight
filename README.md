@@ -8,10 +8,10 @@ separate throughout the cycle.
 
 Repository: [johdav999/GetRight](https://github.com/johdav999/GetRight).
 
-## Starter status
+## Implementation status
 
-This repository is a runnable foundation, not a completed integration with either
-application. It includes:
+This repository includes the foundation and the first milestone 1 integration
+slice. It includes:
 
 - A .NET 10 Blazor dashboard with application filters, readable test steps and run history.
 - SQLite persistence for test snapshots, results, review decisions and feedback.
@@ -19,12 +19,14 @@ application. It includes:
 - An isolated demo test that creates, saves and reopens a note, capturing step
   screenshots, a trace, fixture identity and the running assembly version.
 - Step-specific feedback, task previews and downloadable implementation prompts.
-- Five draft WriterApp tests and one draft Virtual Company workflow.
+- WriterApp application setup, runtime build/account checks, and a create/save/reopen
+  adapter against an actual isolated WriterApp instance.
+- Four remaining draft WriterApp tests and one draft Virtual Company workflow.
 - Build checks, a browser/API smoke check, GitHub Actions and an issue template.
 
-**Not implemented yet:** WriterApp/Virtual Company executable adapters, application
-login and fixture provisioning, Codex job execution, worktree build/launch management,
-and automatically linked reruns. These are tracked in [the roadmap](docs/roadmap.md).
+**Not implemented yet:** the remaining WriterApp adapters, external/multi-user login,
+Virtual Company execution, Codex jobs, worktree build/launch management and linked
+reruns. These are tracked in the [four-milestone roadmap](docs/roadmap.md).
 Draft tests are disabled. Creating feedback exports a task; it does not launch Codex.
 
 ## Requirements
@@ -55,6 +57,10 @@ Open [Getright on this computer](http://127.0.0.1:5120). Select **Run UAT test**
 the Getright demo. The worker opens a browser, performs four repeatable steps and
 reports the result. Open its run history entry to inspect screenshots and download
 the trace. Accept the run, or choose a step and create an improvement task.
+
+For WriterApp, follow [the isolated host and setup instructions](docs/writerapp-uat.md).
+Its first adapter has been verified against an actual local build. Milestone 1
+remains in progress until all five workflows are implemented and validated.
 
 Use `npx --prefix worker playwright show-trace <path-to-trace.zip>` to inspect a
 downloaded trace. Task prompts and traces remain local unless you share them.

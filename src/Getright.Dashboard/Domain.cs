@@ -13,14 +13,18 @@ public record UatRun(string Id, string TestId, string ApplicationId, string Stat
     string Acceptance, DateTimeOffset CreatedAt, DateTimeOffset? StartedAt,
     DateTimeOffset? CompletedAt, string FixtureId, string? BuildVersion,
     string? BaseUrl, List<StepResult> Steps, string? Trace, string? Error,
-    UatTest TestSnapshot);
+    UatTest TestSnapshot, ApplicationProfile? Target = null, ExecutionIdentity? Identity = null);
+public record ApplicationProfile(string ApplicationId, string BaseUrl, string ExpectedBuildVersion,
+    string ExpectedUserId, bool IsolatedDataConfirmed, string? SourceCommit = null, bool SourceWasDirty = false);
+public record ExecutionIdentity(string UserId, string? DocumentId, string EvidenceKind, List<string>? Roles = null);
+public record ApplicationReadiness(bool Ready, string Message, string? RunningVersion = null);
 public record Feedback(string Id, string RunId, string StepId, string Comment,
     string RequestedOutcome, DateTimeOffset CreatedAt, string Prompt);
 public record FeedbackRequest(string StepId, string Comment, string RequestedOutcome);
 public record ReviewRequest(string Acceptance);
 public record QueueRequest(string TestId);
 public record CompletionRequest(string Lease, string Status, string? BuildVersion,
-    string? BaseUrl, List<StepResult>? Steps, string? Trace, string? Error);
+    string? BaseUrl, List<StepResult>? Steps, string? Trace, string? Error, ExecutionIdentity? Identity = null);
 public record RunLease(UatRun Run, string Lease);
 
 public static class AppJson

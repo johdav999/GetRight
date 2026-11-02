@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { api } from './settings.mjs';
+import { writerAppAdapter } from './writerapp.mjs';
 
 // Adapter IDs are allowlisted in source. The API cannot submit executable code,
 // shell commands or arbitrary navigation targets to this local worker.
@@ -11,13 +12,17 @@ export async function executeRun(claim, configuration) {
   const directory = path.join(configuration.dataPath, 'evidence', run.id);
   await mkdir(directory, { recursive: true });
   const result = { lease, status: 'failed', buildVersion: null, baseUrl: configuration.dashboardUrl, steps: [], trace: null, error: null };
-  let browser, context, currentStep;
+  let browser, context, currentStep, adapter;
   const pageErrors = [];
   try {
-    if (run.testSnapshot.adapter !== 'getright-save-note' || run.applicationId !== 'getright') throw new Error('No registered adapter for this test.');
-    const health = await api(configuration.dashboardUrl, '/api/health');
-    if (health.name !== 'Getright' || !health.version) throw new Error('The running application did not identify its build.');
-    result.buildVersion = health.version;
+    const demo = run.testSnapshot.adapter === 'getright-save-note' && run.applicationId === 'getright';
+    const writer = run.testSnapshot.adapter === 'writerapp-create-save' && run.applicationId === 'writerapp';
+    if (!demo && !writer) throw new Error('No registered adapter for this test.');
+    if (demo) {
+      const health = await api(configuration.dashboardUrl, '/api/health');
+      if (health.name !== 'Getright' || !health.version) throw new Error('The running application did not identify its build.');
+      result.buildVersion = health.version;
+    }
     browser = await chromium.launch({ headless: configuration.headless, slowMo: configuration.headless ? 0 : 200 });
     context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     context.setDefaultTimeout(15_000);
@@ -26,7 +31,7 @@ export async function executeRun(claim, configuration) {
     page.on('pageerror', error => pageErrors.push(error.message));
     const title = `UAT note ${run.id.slice(0, 8)}`;
     const body = `Saved fixture content for ${run.fixtureId}.`;
-    const actions = {
+    let actions = {
       open: async () => {
         await page.goto(`${configuration.dashboardUrl}/uat-fixture.html?fixture=${run.fixtureId}`);
         await expect(page.getByRole('heading', { name: 'Your working note' })).toBeVisible();
@@ -46,6 +51,15 @@ export async function executeRun(claim, configuration) {
         await expect(page.getByLabel('Note', { exact: true })).toHaveValue(body);
       },
     };
+    if (writer) {
+      adapter = writerAppAdapter(page, context, run);
+      result.baseUrl = adapter.origin;
+      result.buildVersion = await adapter.verify();
+      result.identity = adapter.identity;
+      actions = adapter.actions;
+      // Target UAT cannot navigate to an external sign-in/provider by accident.
+      await context.route('**/*', route => new URL(route.request().url()).origin === adapter.origin ? route.continue() : route.abort('blockedbyclient'));
+    }
     for (const step of run.testSnapshot.steps) {
       currentStep = step.id;
       if (!Object.hasOwn(actions, step.id)) throw new Error(`Unregistered adapter step: ${step.id}`);
@@ -56,8 +70,8 @@ export async function executeRun(claim, configuration) {
       result.steps.push({ stepId: step.id, status: 'passed', screenshot, error: null });
       currentStep = null;
     }
-    const finalHealth = await api(configuration.dashboardUrl, '/api/health');
-    if (finalHealth.version !== result.buildVersion) throw new Error('The application build changed during this run.');
+    const finalVersion = writer ? await adapter.verify() : (await api(configuration.dashboardUrl, '/api/health')).version;
+    if (finalVersion !== result.buildVersion) throw new Error('The application build changed during this run.');
     result.status = 'passed';
   } catch (error) {
     result.error = error.message;

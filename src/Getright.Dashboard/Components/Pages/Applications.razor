@@ -1,0 +1,50 @@
+@page "/applications"
+@inject RunStore Store
+@inject ApplicationSetup Setup
+
+<PageTitle>Application setup · Getright</PageTitle>
+<div class="topbar"><a href="/">Test control room</a><span>Application setup</span></div>
+<header class="page-header"><div><p class="eyebrow">MILESTONE 1 · WRITERAPP</p><h1>Application setup</h1><p class="muted">Connect a local test instance before running a real application workflow.</p></div></header>
+<section class="panel setup-panel">
+    <div class="panel-heading"><div><h2>WriterApp</h2><p>Create, save and reopen a document using a dedicated UAT account.</p></div></div>
+    <div class="setup-form">
+        <p>Use an isolated development instance with automatic test sign-in. Getright checks the running build and account before creating a document.</p>
+        <label for="base-url">Local application URL</label><input id="base-url" @bind="baseUrl" disabled="@(busy || !RendererInfo.IsInteractive)" placeholder="http://localhost:5387" />
+        <label for="build-version">Expected build version</label><input id="build-version" @bind="buildVersion" disabled="@(busy || !RendererInfo.IsInteractive)" placeholder="Version reported by the intended local build" />
+        <small>The instance must report this exact version. Use a distinct version for each build you compare.</small>
+        <label for="test-account">Dedicated UAT account ID</label><input id="test-account" @bind="userId" disabled="@(busy || !RendererInfo.IsInteractive)" placeholder="getright-uat" />
+        <label class="checkbox-label"><input type="checkbox" @bind="isolated" disabled="@(busy || !RendererInfo.IsInteractive)" /> This instance uses isolated UAT data and a dedicated test account.</label>
+        <div class="review-actions"><button disabled="@(busy || !RendererInfo.IsInteractive)" @onclick="Save">Save setup</button><button class="secondary" disabled="@(busy || !RendererInfo.IsInteractive)" @onclick="Check">Check connection</button><a href="/">Return to tests</a></div>
+        @if (message is not null) { <p role="status" class="@(ready ? "success-text" : "muted")">@message</p> }
+        @if (error is not null) { <p role="alert" class="error-text">@error</p> }
+    </div>
+</section>
+<div class="notice">Synopsis, edit/reopen, sharing and save-failure recovery are the remaining milestone 1 adapters. Virtual Company setup is milestone 3.</div>
+
+@code {
+    private string baseUrl = "http://localhost:5387", buildVersion = "", userId = "dev-oid";
+    private bool isolated, busy, ready;
+    private string? message, error;
+    protected override void OnInitialized()
+    {
+        if (Store.Profile("writerapp") is { } profile)
+        { baseUrl = profile.BaseUrl; buildVersion = profile.ExpectedBuildVersion; userId = profile.ExpectedUserId; isolated = profile.IsolatedDataConfirmed; }
+    }
+    private void Save()
+    {
+        try
+        {
+            var saved = Store.SaveProfile(new ApplicationProfile("writerapp", baseUrl, buildVersion, userId, isolated));
+            baseUrl = saved.BaseUrl; buildVersion = saved.ExpectedBuildVersion; userId = saved.ExpectedUserId;
+            error = null; ready = false; message = "Setup saved. Check the connection before running a test.";
+        }
+        catch (ArgumentException exception) { error = exception.Message; message = null; }
+    }
+    private async Task Check()
+    {
+        Save(); if (error is not null) return;
+        busy = true;
+        try { var result = await Setup.Check("writerapp"); ready = result.Ready; message = result.Message; }
+        finally { busy = false; }
+    }
+}

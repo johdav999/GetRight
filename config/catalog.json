@@ -19,11 +19,11 @@
     },
     {
       "id": "writerapp-create-save", "applicationId": "writerapp", "title": "Create and save a document",
-      "purpose": "Create a document in an isolated workspace, save and reopen it.", "readiness": "draft", "adapter": null,
+      "purpose": "Create a document in an isolated WriterApp instance, save and reopen it.", "readiness": "setup-required", "adapter": "writerapp-create-save",
       "reviewQuestion": "Is creating and saving a document clear and convenient?",
       "steps": [
         { "id": "library", "title": "Open the document library", "expected": "The isolated workspace is visible." },
-        { "id": "create", "title": "Create a document and enter text", "expected": "A new document accepts a title and body." },
+        { "id": "create", "title": "Create a document and enter unique text", "expected": "The new document's editor accepts this run's unique fixture content." },
         { "id": "save", "title": "Save the document", "expected": "Persistence succeeds and is visible to the user." },
         { "id": "reopen", "title": "Reload and reopen", "expected": "The title and text are preserved." }
       ]

@@ -18,13 +18,15 @@ automated verification and a user's judgment as independent results.
    rerun the original test and compare evidence.
 8. Make a new human acceptance decision for the new run.
 
-The current starter supports steps 1–5 for its isolated demo. Steps 6–8 require the
-job and application lifecycle work described in the roadmap.
+The current implementation supports steps 1–5 for the isolated demo and the first
+WriterApp persistence workflow. Steps 6–8 require milestone 2's job and application
+lifecycle work described in the four-milestone roadmap.
 
 ## First applications
 
-WriterApp starts with five draft workflows: create/save/reopen a document,
-generate a synopsis, edit/reopen, share/accept, and save-failure recovery. Its
+WriterApp starts with five workflows: create/save/reopen a document (the first
+implemented adapter), generate a synopsis, edit/reopen, share/accept, and save-failure
+recovery (four remaining drafts). Its
 existing `Tests/sharing-workspace.mjs` is a starting reference, not an adapter that
 Getright currently executes. It uses isolated API fixtures with the actual client.
 Preserve that distinction when importing it; fixture UI checks are not live

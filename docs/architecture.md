@@ -9,6 +9,7 @@ flowchart LR
     Worker[Local Node worker] -->|claim and complete over loopback| Dashboard
     Worker --> Browser[Playwright Chromium]
     Browser --> Fixture[Isolated Getright fixture]
+    Browser --> WriterApp[Isolated WriterApp instance]
     Worker --> Evidence[Local screenshots and trace]
     Dashboard --> Evidence
     Dashboard --> Task[Downloadable improvement task]
@@ -16,9 +17,10 @@ flowchart LR
 
 `src/Getright.Dashboard` hosts interactive server-rendered pages and a small JSON
 API. `RunStore` serializes mutations and uses SQLite WAL with parameterized SQL.
-Schema version 1 stores run snapshots and feedback JSON, plus a private worker
-lease. The database is initialized on startup. A future schema change must add an
-explicit migration; do not silently reinterpret old run payloads.
+Schema version 2 retains run snapshots, feedback JSON and the private worker lease,
+and adds local application profiles. Startup migrates schema 1 transactionally,
+preserving legacy runs without target/identity fields. Newer schemas are rejected
+instead of being downgraded. Future schema changes require explicit migrations.
 
 `config/catalog.json` is copied into the dashboard build and published output.
 Rebuild after editing it. Test definitions are snapped into queued runs, so later
@@ -35,14 +37,19 @@ failed run; they do not manufacture passing steps or human acceptance.
 
 The running dashboard's assembly informational version identifies the demo build.
 .NET includes the source revision when building from a committed Git checkout.
-This is sufficient for the local fixture only. Target applications need their own
-runtime build identity endpoint and clean, attributable build/launch pipeline.
+This identifies the local fixture. The WriterApp launcher supplies a unique
+assembly version and retains a source receipt; preflight checks its actual version
+endpoint and development identity. Runs freeze that profile, and the worker checks
+it again before creating data and after the workflow. Passing completions must
+match the frozen target/build/account and include the created document identity.
+The source receipt records if the source was dirty; a commit hash alone does not
+identify those uncommitted changes. Worktree build/launch orchestration is milestone 2.
 
 ## Data and state
 
 ```text
 data/
-  getright.db             # runs and feedback, schema version 1
+  getright.db             # runs, feedback and application profiles, schema version 2
   keys/                   # local ASP.NET keys, protected with DPAPI on Windows
   evidence/<run-id>/
     open.png
@@ -50,6 +57,7 @@ data/
     save.png
     reopen.png
     trace.zip
+  writerapp/<instance-id>/ # isolated WriterApp database, config and build receipt
 ```
 
 Automated state: `queued → running → passed | failed | interrupted`.

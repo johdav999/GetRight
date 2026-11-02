@@ -14,6 +14,8 @@ else
     { <div class="notice">@(run.Status == "queued" ? "Waiting for the local worker. Start it from the repository with npm run start --prefix worker." : "The browser test is running. Refresh this page to see its result.")</div> }
     <dl class="metadata"><div><dt>Tested build</dt><dd>@(run.BuildVersion ?? "Not recorded yet")</dd></div><div><dt>Fixture</dt><dd>@run.FixtureId</dd></div><div><dt>Environment</dt><dd>@(run.BaseUrl ?? "Not recorded yet")</dd></div><div><dt>Trace</dt><dd>@if (run.Trace is { } trace) { <a href="/api/evidence/@trace">Download Playwright trace</a> } else { <span>No trace available</span> }</dd></div></dl>
     @if (run.Error is not null) { <div class="notice error" role="alert">@run.Error</div> }
+    @if (run.Target is { } target)
+    { <div class="run-summary"><span>Expected build: <strong>@target.ExpectedBuildVersion</strong></span><span>UAT account: <strong>@target.ExpectedUserId</strong></span><span>Evidence: <strong>@(run.Identity?.EvidenceKind ?? "Not verified yet")</strong></span><span>Document: <strong>@(run.Identity?.DocumentId ?? "Not created yet")</strong></span></div> }
     <div class="workspace-grid">
     <section class="panel"><div class="panel-heading"><h2>Step evidence</h2></div>
         @foreach (var step in run.TestSnapshot.Steps)

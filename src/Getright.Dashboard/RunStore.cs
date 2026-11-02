@@ -30,13 +30,30 @@ public sealed class RunStore
         }.ToString();
         using var db = Open();
         using var command = db.CreateCommand();
-        command.CommandText = """
-            PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, lease TEXT);
-            CREATE TABLE IF NOT EXISTS feedback (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), payload TEXT NOT NULL);
-            PRAGMA user_version=1;
-            """;
+        command.CommandText = "PRAGMA journal_mode=WAL;";
         command.ExecuteNonQuery();
+        command.CommandText = "PRAGMA user_version";
+        var schemaVersion = Convert.ToInt32(command.ExecuteScalar());
+        if (schemaVersion > 2) throw new InvalidOperationException("This database requires a newer Getright version.");
+        using (var transaction = db.BeginTransaction())
+        {
+            command.Transaction = transaction;
+            if (schemaVersion == 0)
+            {
+                command.CommandText = """
+                    CREATE TABLE runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL, lease TEXT);
+                    CREATE TABLE feedback (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), payload TEXT NOT NULL);
+                    PRAGMA user_version=1;
+                    """;
+                command.ExecuteNonQuery();
+            }
+            if (schemaVersion < 2)
+            {
+                command.CommandText = "CREATE TABLE application_profiles (id TEXT PRIMARY KEY, payload TEXT NOT NULL); PRAGMA user_version=2;";
+                command.ExecuteNonQuery();
+            }
+            transaction.Commit();
+        }
         // A restarted dashboard cannot vouch for workers from the old process.
         foreach (var run in List().Where(r => r.Status == "running"))
             Save(run with { Status = "interrupted", CompletedAt = DateTimeOffset.UtcNow,
@@ -65,16 +82,19 @@ public sealed class RunStore
         cmd.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(run, AppJson.Options));
         cmd.Parameters.AddWithValue("$lease", (object?)lease ?? DBNull.Value); cmd.ExecuteNonQuery();
     }
-    public UatRun Queue(string testId)
+    public UatRun Queue(string testId, ApplicationProfile? target = null)
     {
         lock (gate)
         {
             var test = catalogue.Get(testId);
-            if (test.Readiness != "ready" || test.Adapter != "getright-save-note")
+            var demo = test.ApplicationId == "getright" && test.Adapter == "getright-save-note" && test.Readiness == "ready";
+            var writer = test.ApplicationId == "writerapp" && test.Adapter == "writerapp-create-save" && target?.ApplicationId == "writerapp";
+            if (!demo && !writer)
                 throw new ArgumentException("This test needs an application adapter before it can run.");
+            if (writer) ApplicationSetup.Validate(target!);
             var id = Guid.NewGuid().ToString("N");
             var run = new UatRun(id, test.Id, test.ApplicationId, "queued", "pending",
-                DateTimeOffset.UtcNow, null, null, $"uat-{id}", null, null, [], null, null, test);
+                DateTimeOffset.UtcNow, null, null, $"uat-{id}", null, null, [], null, null, test, writer ? target : null);
             Save(run); return run;
         }
     }
@@ -117,9 +137,14 @@ public sealed class RunStore
                 steps.Any(s => s.Status != "passed" || s.Screenshot is null) || request.Trace is null ||
                 string.IsNullOrWhiteSpace(request.BuildVersion) || string.IsNullOrWhiteSpace(request.BaseUrl)))
                 throw new ArgumentException("Passing runs require every step, screenshots, trace and tested build identity.");
+            if (request.Status == "passed" && run.Target is { } target &&
+                (request.BuildVersion != target.ExpectedBuildVersion || request.BaseUrl != target.BaseUrl ||
+                 request.Identity?.UserId != target.ExpectedUserId || request.Identity.EvidenceKind != "live-application" ||
+                 !Guid.TryParse(request.Identity.DocumentId, out _)))
+                throw new ArgumentException("The tested application, build, account and document must match the run's frozen target.");
             run = run with { Status = request.Status, CompletedAt = DateTimeOffset.UtcNow,
                 BuildVersion = request.BuildVersion, BaseUrl = request.BaseUrl, Steps = steps,
-                Trace = request.Trace, Error = request.Error };
+                Trace = request.Trace, Error = request.Error, Identity = request.Identity };
             Save(run); return run;
         }
     }
@@ -177,6 +202,9 @@ public sealed class RunStore
                 .AppendLine($"Application: {run.ApplicationId}\nTest: {run.TestSnapshot.Title} ({run.TestId})")
                 .AppendLine($"Run: {run.Id}\nTested build: {run.BuildVersion ?? "unavailable"}\nEnvironment: {run.BaseUrl ?? "unavailable"}")
                 .AppendLine($"Fixture: {run.FixtureId}\nStep: {step.Title} ({step.Id})\nExpected: {step.Expected}")
+                .AppendLine($"Evidence scope: {run.Identity?.EvidenceKind ?? (run.ApplicationId == "getright" ? "demo" : "unverified")}\nTest account: {run.Identity?.UserId ?? "unavailable"}\nDocument: {run.Identity?.DocumentId ?? "unavailable"}")
+                .AppendLine($"Source revision from build receipt: {run.Target?.SourceCommit ?? "not supplied"}\nSource had local changes: {(run.Target?.SourceCommit is null ? "not recorded" : run.Target.SourceWasDirty.ToString())}")
+                .AppendLine($"Account roles: {string.Join(", ", run.Identity?.Roles ?? [])}")
                 .AppendLine($"Automated result: {run.Status}\nScreenshot: {screenshot ?? "unavailable"}\nTrace: {run.Trace ?? "unavailable"}")
                 .AppendLine($"\nUser feedback:\n{request.Comment.Trim()}\n\nRequested outcome:\n{request.RequestedOutcome.Trim()}")
                 .AppendLine("\nAcceptance:\n- Address the requested outcome while preserving the existing workflow.")
@@ -193,6 +221,31 @@ public sealed class RunStore
             cmd.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(feedback, AppJson.Options));
             cmd.Parameters.AddWithValue("$runPayload", JsonSerializer.Serialize(run with { Acceptance = "improvements-requested" }, AppJson.Options));
             cmd.ExecuteNonQuery(); transaction.Commit(); return feedback;
+        }
+    }
+
+    public ApplicationProfile? Profile(string applicationId)
+    {
+        lock (gate)
+        {
+            using var db = Open(); using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT payload FROM application_profiles WHERE id=$id";
+            cmd.Parameters.AddWithValue("$id", applicationId);
+            return cmd.ExecuteScalar() is string payload ? JsonSerializer.Deserialize<ApplicationProfile>(payload, AppJson.Options) : null;
+        }
+    }
+    public ApplicationProfile SaveProfile(ApplicationProfile profile)
+    {
+        lock (gate)
+        {
+            ApplicationSetup.Validate(profile);
+            profile = profile with { BaseUrl = new Uri(profile.BaseUrl).GetLeftPart(UriPartial.Authority),
+                ExpectedBuildVersion = profile.ExpectedBuildVersion.Trim(), ExpectedUserId = profile.ExpectedUserId.Trim() };
+            using var db = Open(); using var cmd = db.CreateCommand();
+            cmd.CommandText = "INSERT INTO application_profiles(id,payload) VALUES($id,$payload) ON CONFLICT(id) DO UPDATE SET payload=$payload";
+            cmd.Parameters.AddWithValue("$id", profile.ApplicationId);
+            cmd.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(profile, AppJson.Options));
+            cmd.ExecuteNonQuery(); return profile;
         }
     }
 }
