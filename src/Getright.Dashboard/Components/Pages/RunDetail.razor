@@ -1,0 +1,67 @@
+@page "/runs/{Id}"
+@inject RunStore Store
+@inject UatCatalogue Catalogue
+
+<PageTitle>Run review · Getright</PageTitle>
+<div class="topbar"><a href="/">Test control room</a><span>Run review</span></div>
+@if (run is null)
+{ <h1>Run unavailable</h1><p role="alert">@error</p> }
+else
+{
+    <header class="page-header"><div><p class="eyebrow">@Catalogue.Value.Applications.First(a => a.Id == run.ApplicationId).Name</p><h1>@run.TestSnapshot.Title</h1><p class="muted">Run @run.Id · @run.CreatedAt.ToLocalTime().ToString("g")</p></div><button class="secondary" @onclick="Load">Refresh run</button></header>
+    <div class="run-summary"><span>Automated result <span class="badge @run.Status">@Home.Label(run.Status)</span></span><span>User acceptance <span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></span></div>
+    @if (run.Status is "queued" or "running")
+    { <div class="notice">@(run.Status == "queued" ? "Waiting for the local worker. Start it from the repository with npm run start --prefix worker." : "The browser test is running. Refresh this page to see its result.")</div> }
+    <dl class="metadata"><div><dt>Tested build</dt><dd>@(run.BuildVersion ?? "Not recorded yet")</dd></div><div><dt>Fixture</dt><dd>@run.FixtureId</dd></div><div><dt>Environment</dt><dd>@(run.BaseUrl ?? "Not recorded yet")</dd></div><div><dt>Trace</dt><dd>@if (run.Trace is { } trace) { <a href="/api/evidence/@trace">Download Playwright trace</a> } else { <span>No trace available</span> }</dd></div></dl>
+    @if (run.Error is not null) { <div class="notice error" role="alert">@run.Error</div> }
+    <div class="workspace-grid">
+    <section class="panel"><div class="panel-heading"><h2>Step evidence</h2></div>
+        @foreach (var step in run.TestSnapshot.Steps)
+        {
+            var result = run.Steps.FirstOrDefault(s => s.StepId == step.Id);
+            <article class="evidence-step"><div class="step-title"><h3>@step.Title</h3><span class="badge @(result?.Status ?? "not-run")">@Home.Label(result?.Status ?? "not-run")</span></div><p>@step.Expected</p>
+                @if (result?.Screenshot is { } shot) { <a href="/api/evidence/@shot" target="_blank"><img src="/api/evidence/@shot" alt="Screenshot for @step.Title" loading="lazy" /></a> }
+                @if (result?.Error is { } stepError) { <p class="error-text">@stepError</p> }
+            </article>
+        }
+    </section>
+    <section class="panel review-panel"><div class="panel-heading"><h2>Your review</h2></div><p>@run.TestSnapshot.ReviewQuestion</p>
+        <div class="review-actions"><button disabled="@InProgress" @onclick='() => Review("accepted")'>Accept this run</button><button class="secondary" disabled="@InProgress" @onclick='() => Review("improvements-requested")'>Request improvements</button><button class="text-button" disabled="@InProgress" @onclick='() => Review("pending")'>Reset to pending</button></div>
+        <hr /><h3>Describe an improvement</h3><p class="muted">Attach feedback to an exact step and export a reproducible task.</p>
+        <label for="step">Test step</label><select id="step" @bind="stepId" disabled="@InProgress">@foreach (var step in run.TestSnapshot.Steps) { <option value="@step.Id">@step.Title</option> }</select>
+        <label for="comment">What needs improving?</label><textarea id="comment" @bind="comment" maxlength="8000" rows="4" disabled="@InProgress" placeholder="Describe what you saw and why it was confusing."></textarea>
+        <label for="outcome">Requested outcome</label><textarea id="outcome" @bind="outcome" maxlength="8000" rows="3" disabled="@InProgress" placeholder="Describe the behavior you want to see."></textarea>
+        <button disabled="@InProgress" @onclick="SaveFeedback">Create improvement task</button>
+        @if (error is not null) { <p class="error-text" role="alert">@error</p> }
+        @if (notice is not null) { <p role="status">@notice</p> }
+        @foreach (var feedback in feedbacks)
+        { <article class="feedback"><span class="mini-label">@feedback.StepId · @feedback.CreatedAt.ToLocalTime().ToString("g")</span><p>@feedback.Comment</p><strong>@feedback.RequestedOutcome</strong><a href="/api/runs/@run.Id/tasks/@feedback.Id">Download task prompt</a><details><summary>Preview task</summary><pre>@feedback.Prompt</pre></details></article> }
+        <div class="notice">Task drafts are ready for review. Automatic Codex implementation, worktree builds and linked reruns are planned next.</div>
+    </section>
+    </div>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+    private UatRun? run;
+    private List<Feedback> feedbacks = [];
+    private string stepId = "", comment = "", outcome = "";
+    private string? error, notice;
+    private bool InProgress => !RendererInfo.IsInteractive || run?.Status is "queued" or "running";
+    protected override void OnParametersSet() { stepId = ""; Load(); }
+    private void Load()
+    {
+        try { run = Store.Get(Id); feedbacks = Store.FeedbackFor(Id); if (stepId == "") stepId = run.TestSnapshot.Steps[0].Id; error = null; }
+        catch (ArgumentException exception) { run = null; error = exception.Message; }
+    }
+    private void Review(string acceptance)
+    {
+        try { Store.Review(Id, acceptance); Load(); notice = "Review saved for this run."; }
+        catch (ArgumentException exception) { error = exception.Message; }
+    }
+    private void SaveFeedback()
+    {
+        try { Store.AddFeedback(Id, new FeedbackRequest(stepId, comment, outcome)); comment = ""; outcome = ""; Load(); notice = "Improvement task created. Review or download it below."; }
+        catch (ArgumentException exception) { error = exception.Message; }
+    }
+}

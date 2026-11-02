@@ -1,0 +1,27 @@
+# Local state and credentials
+.local/
+data/
+artifacts/
+worktrees/
+config/*.local.json
+**/.env
+**/.env.*
+!**/.env.example
+**/appsettings.Local.json
+**/playwright/.auth/
+**/storage-state*.json
+
+# Build and editor outputs
+**/bin/
+**/obj/
+**/node_modules/
+**/test-results/
+**/playwright-report/
+.vs/
+.vscode/
+*.user
+*.suo
+*.log
+*.db
+*.db-shm
+*.db-wal

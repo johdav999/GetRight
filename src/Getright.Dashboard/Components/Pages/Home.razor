@@ -1,0 +1,82 @@
+﻿@page "/"
+
+@inject UatCatalogue Catalogue
+@inject RunStore Store
+@implements IAsyncDisposable
+
+<PageTitle>Getright · Test control room</PageTitle>
+
+<div class="topbar"><span>Workspace <span class="muted">/</span> Test control room</span><span class="local-label">LOCAL UAT</span></div>
+<header class="page-header"><div><p class="eyebrow">BUILD CONFIDENCE, ONE WORKFLOW AT A TIME</p><h1>Test control room</h1><p class="muted">Run a workflow. Review the evidence. Make the next version better.</p></div><button class="secondary" @onclick="Refresh">Refresh results</button></header>
+<div class="stats">
+    <div><span>Applications</span><strong>@Catalogue.Value.Applications.Count</strong></div>
+    <div><span>Ready to run</span><strong>@Catalogue.Value.Tests.Count(t => t.Readiness == "ready") <small>/ @Catalogue.Value.Tests.Count tests</small></strong></div>
+    <div><span>Automated passes</span><strong>@runs.Count(r => r.Status == "passed")</strong></div>
+    <div><span>Awaiting review</span><strong>@runs.Count(r => r.CompletedAt is not null && r.Acceptance == "pending")</strong></div>
+</div>
+<div class="workspace-grid">
+<section class="panel catalogue">
+    <div class="panel-heading"><div><h2>Your test cases</h2><p>Automation and acceptance are tracked separately.</p></div><span class="counter">@Catalogue.Value.Tests.Count</span></div>
+    <div class="filters" role="group" aria-label="Filter by application">
+        <button class="@(filter == "all" ? "filter selected" : "filter")" @onclick='() => filter = "all"'>All applications</button>
+        @foreach (var application in Catalogue.Value.Applications)
+        { <button class="@(filter == application.Id ? "filter selected" : "filter")" @onclick="() => filter = application.Id">@application.Name</button> }
+    </div>
+    @foreach (var test in Catalogue.Value.Tests.Where(t => filter == "all" || t.ApplicationId == filter))
+    {
+        var latest = runs.FirstOrDefault(r => r.TestId == test.Id);
+        <article class="test-card @(selectedTest?.Id == test.Id ? "active" : "")">
+            <div class="test-card-top"><span class="app-label">@AppName(test.ApplicationId)</span><span class="badge @test.Readiness">@Label(test.Readiness)</span></div>
+            <button class="test-title" @onclick="() => Select(test)">@test.Title</button>
+            <p>@test.Purpose</p>
+            <div class="test-card-bottom"><div><span class="mini-label">AUTOMATED</span><span class="badge @(latest?.Status ?? "not-run")">@Label(latest?.Status ?? "not-run")</span></div><div><span class="mini-label">ACCEPTANCE</span><span class="badge @(latest?.Acceptance ?? "pending")">@Label(latest?.Acceptance ?? "pending")</span></div><button class="run-button" disabled="@(test.Readiness != "ready" || !RendererInfo.IsInteractive)" @onclick="() => Queue(test)">Run UAT test <span aria-hidden="true">↗</span></button></div>
+        </article>
+    }
+</section>
+<section class="panel detail" aria-label="Test details">
+    @if (selectedTest is { } current)
+    {
+        <div class="panel-heading"><div><span class="eyebrow">WORKFLOW DETAIL</span><h2>@current.Title</h2></div></div>
+        @if (current.Readiness == "draft")
+        { <div class="notice">This test is a draft. Configure isolated data, login, build identification and an executable adapter before running it.</div> }
+        <ol class="steps">@foreach (var step in current.Steps) { <li><strong>@step.Title</strong><p>@step.Expected</p></li> }</ol>
+        <div class="review-question"><span class="mini-label">HUMAN REVIEW</span><p>@current.ReviewQuestion</p></div>
+        <h3>Run history</h3>
+        @if (!runs.Any(r => r.TestId == current.Id))
+        { <div class="empty-state"><span aria-hidden="true">◷</span><strong>A fresh start</strong><p>Your first run will appear here with its screenshots and results.</p></div> }
+        @foreach (var run in runs.Where(r => r.TestId == current.Id).Take(12))
+        { <a class="history-row" href="/runs/@run.Id"><div><strong>@run.CreatedAt.ToLocalTime().ToString("g")</strong><small>@run.Id[..8]</small></div><span class="badge @run.Status">@Label(run.Status)</span><span class="badge @run.Acceptance">@Label(run.Acceptance)</span></a> }
+    }
+</section>
+</div>
+<div class="setup-note"><strong>Start the local worker to execute queued tests.</strong><code>npm run start --prefix worker</code><span>Feedback creates a task draft. Codex implementation is the next milestone.</span></div>
+@if (message is not null) { <div class="toast" role="status">@message <button @onclick="() => message = null" aria-label="Dismiss notification">×</button></div> }
+
+@code {
+    private List<UatRun> runs = [];
+    private UatTest? selectedTest;
+    private string filter = "all";
+    private string? message;
+    private readonly CancellationTokenSource stop = new();
+    private Task? polling;
+    protected override void OnInitialized()
+    {
+        selectedTest = Catalogue.Value.Tests[0]; Refresh(); polling = Poll();
+    }
+    private async Task Poll()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        try { while (await timer.WaitForNextTickAsync(stop.Token)) await InvokeAsync(() => { Refresh(); StateHasChanged(); }); }
+        catch (OperationCanceledException) { }
+    }
+    private void Refresh() => runs = Store.List();
+    private void Select(UatTest test) => selectedTest = test;
+    private string AppName(string id) => Catalogue.Value.Applications.First(a => a.Id == id).Name;
+    public static string Label(string value) => value switch { "not-run" => "Not run", "improvements-requested" => "Improvements requested", _ => char.ToUpperInvariant(value[0]) + value[1..] };
+    private void Queue(UatTest test)
+    {
+        try { var run = Store.Queue(test.Id); selectedTest = test; message = $"Run {run.Id[..8]} queued. The local worker will pick it up."; Refresh(); }
+        catch (ArgumentException error) { message = error.Message; }
+    }
+    public async ValueTask DisposeAsync() { await stop.CancelAsync(); if (polling is not null) await polling; stop.Dispose(); }
+}

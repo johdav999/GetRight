@@ -1,0 +1,29 @@
+name: Build and verify
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: dotnet restore Getright.sln --locked-mode
+      - run: dotnet build Getright.sln --configuration Release --no-restore --warnaserror
+      - run: npm ci --prefix worker
+      - run: npm run browsers --prefix worker
+      - run: npm test --prefix worker
+      - run: npm run smoke --prefix worker

@@ -1,0 +1,19 @@
+{
+  "name": "@getright/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "once": "node src/index.mjs --once",
+    "test": "node --test tests/*.test.mjs",
+    "smoke": "node tests/smoke.mjs",
+    "browsers": "playwright install chromium"
+  },
+  "dependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}

@@ -1,0 +1,32 @@
+name: UAT improvement
+description: Report a reproducible improvement from a Getright run.
+body:
+  - type: input
+    id: application
+    attributes:
+      label: Application and test ID
+    validations:
+      required: true
+  - type: input
+    id: run
+    attributes:
+      label: Run ID, step ID and tested build
+    validations:
+      required: true
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Feedback and requested outcome
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized reproduction and evidence references
+      description: Keep private screenshots, traces, account details and local task exports out of public issues.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+    validations:
+      required: true

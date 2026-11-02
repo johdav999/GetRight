@@ -1,0 +1,62 @@
+{
+  "applications": [
+    { "id": "getright", "name": "Getright demo", "description": "An isolated local fixture for verifying the UAT loop.", "repositoryHint": "." },
+    { "id": "writerapp", "name": "WriterApp", "description": "Writing and collaboration workflows.", "repositoryHint": "../WriterApp" },
+    { "id": "virtual-company", "name": "Virtual Company", "description": "Business workflows using isolated company data.", "repositoryHint": "../Virtual Company" }
+  ],
+  "tests": [
+    {
+      "id": "getright-save-note", "applicationId": "getright", "title": "Create, save and reopen a note",
+      "purpose": "Verify the runner, persistence checks, evidence capture and human review using a disposable fixture.",
+      "readiness": "ready", "adapter": "getright-save-note",
+      "reviewQuestion": "Is the save confirmation clear, and does the note remain easy to find?",
+      "steps": [
+        { "id": "open", "title": "Open the isolated note workspace", "expected": "An empty editor is available for this run's fixture ID." },
+        { "id": "edit", "title": "Write a note", "expected": "The title and text can be entered." },
+        { "id": "save", "title": "Save the note", "expected": "A successful save confirmation appears." },
+        { "id": "reopen", "title": "Reload and reopen", "expected": "The saved title and text are preserved after reload." }
+      ]
+    },
+    {
+      "id": "writerapp-create-save", "applicationId": "writerapp", "title": "Create and save a document",
+      "purpose": "Create a document in an isolated workspace, save and reopen it.", "readiness": "draft", "adapter": null,
+      "reviewQuestion": "Is creating and saving a document clear and convenient?",
+      "steps": [
+        { "id": "library", "title": "Open the document library", "expected": "The isolated workspace is visible." },
+        { "id": "create", "title": "Create a document and enter text", "expected": "A new document accepts a title and body." },
+        { "id": "save", "title": "Save the document", "expected": "Persistence succeeds and is visible to the user." },
+        { "id": "reopen", "title": "Reload and reopen", "expected": "The title and text are preserved." }
+      ]
+    },
+    {
+      "id": "writerapp-synopsis", "applicationId": "writerapp", "title": "Generate a synopsis",
+      "purpose": "Generate a synopsis from known fixture text with controlled AI responses.", "readiness": "draft", "adapter": null,
+      "reviewQuestion": "Are progress, results and recovery options understandable?",
+      "steps": [ { "id": "generate", "title": "Generate and review a synopsis", "expected": "A result or actionable error appears without losing source text." } ]
+    },
+    {
+      "id": "writerapp-edit-reopen", "applicationId": "writerapp", "title": "Edit and reopen an existing document",
+      "purpose": "Verify edits survive navigation and reload.", "readiness": "draft", "adapter": null,
+      "reviewQuestion": "Can you confidently leave and return to your work?",
+      "steps": [ { "id": "edit-reopen", "title": "Edit, navigate away and reopen", "expected": "The revised content is retained." } ]
+    },
+    {
+      "id": "writerapp-sharing", "applicationId": "writerapp", "title": "Share a document and accept an invitation",
+      "purpose": "Adapt the existing sharing-workspace.mjs fixture with explicit owner and recipient identities.", "readiness": "draft", "adapter": null,
+      "reviewQuestion": "Are document access and invitation actions clear?",
+      "steps": [ { "id": "sharing", "title": "Invite and accept in isolated sessions", "expected": "The recipient receives the intended access and private documents remain private." } ]
+    },
+    {
+      "id": "writerapp-save-recovery", "applicationId": "writerapp", "title": "Recover from a failed save",
+      "purpose": "Use a controlled persistence failure to verify visible error and recovery.", "readiness": "draft", "adapter": null,
+      "reviewQuestion": "Is it clear what failed and how to retry without losing work?",
+      "steps": [ { "id": "retry", "title": "Fail a save, restore service and retry", "expected": "Unsaved edits remain available and the retry persists them." } ]
+    },
+    {
+      "id": "virtual-company-workflow", "applicationId": "virtual-company", "title": "First business workflow",
+      "purpose": "Choose the first business workflow, then define company fixtures, roles, steps and expected results.", "readiness": "draft", "adapter": null,
+      "reviewQuestion": "Can the intended user complete this business workflow confidently?",
+      "steps": [ { "id": "workflow", "title": "Define the selected business workflow", "expected": "A repeatable business outcome is specified before enabling this test." } ]
+    }
+  ]
+}
