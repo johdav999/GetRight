@@ -3,6 +3,7 @@ import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { api } from './settings.mjs';
 import { writerAppAdapter } from './writerapp.mjs';
+import { virtualCompanyAdapter } from './virtual-company.mjs';
 
 // Adapter IDs are allowlisted in source. The API cannot submit executable code,
 // shell commands or arbitrary navigation targets to this local worker.
@@ -19,7 +20,8 @@ export async function executeRun(claim, configuration) {
   try {
     const demo = run.testSnapshot.adapter === 'getright-save-note' && run.applicationId === 'getright';
     const writer = run.testSnapshot.adapter === 'writerapp-create-save' && run.applicationId === 'writerapp';
-    if (!demo && !writer) throw new Error('No registered adapter for this test.');
+    const company = run.testSnapshot.adapter === 'virtual-company-test-setup' && run.applicationId === 'virtual-company';
+    if (!demo && !writer && !company) throw new Error('No registered adapter for this test.');
     if (demo) {
       const health = await api(configuration.dashboardUrl, '/api/health');
       if (health.name !== 'Getright' || !health.version) throw new Error('The running application did not identify its build.');
@@ -55,8 +57,8 @@ export async function executeRun(claim, configuration) {
         await expect(page.getByLabel('Note', { exact: true })).toHaveValue(body);
       },
     };
-    if (writer) {
-      adapter = writerAppAdapter(page, context, run);
+    if (writer || company) {
+      adapter = (company ? virtualCompanyAdapter : writerAppAdapter)(page, context, run);
       result.baseUrl = adapter.origin;
       result.buildVersion = await adapter.verify();
       result.identity = adapter.identity;
@@ -75,7 +77,7 @@ export async function executeRun(claim, configuration) {
       result.steps.push({ stepId: step.id, status: 'passed', screenshot, error: null });
       currentStep = null;
     }
-    const finalVersion = writer ? await adapter.verify() : (await api(configuration.dashboardUrl, '/api/health')).version;
+    const finalVersion = (writer || company) ? await adapter.verify() : (await api(configuration.dashboardUrl, '/api/health')).version;
     if (finalVersion !== result.buildVersion) throw new Error('The application build changed during this run.');
     result.status = 'passed';
   } catch (error) {

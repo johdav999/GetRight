@@ -100,13 +100,13 @@ public sealed partial class RunStore
         {
             var test = catalogue.Get(testId);
             var demo = test.ApplicationId == "getright" && test.Adapter == "getright-save-note" && test.Readiness == "ready";
-            var writer = test.ApplicationId == "writerapp" && test.Adapter == "writerapp-create-save" && target?.ApplicationId == "writerapp";
-            if (!demo && !writer)
+            var targeted = ApplicationSetup.Supported(test.ApplicationId, test.Adapter) && target?.ApplicationId == test.ApplicationId;
+            if (!demo && !targeted)
                 throw new ArgumentException("This test needs an application adapter before it can run.");
-            if (writer) ApplicationSetup.Validate(target!);
+            if (targeted) ApplicationSetup.Validate(target!);
             var id = Guid.NewGuid().ToString("N");
             var run = new UatRun(id, test.Id, test.ApplicationId, "queued", "pending",
-                DateTimeOffset.UtcNow, null, null, $"uat-{id}", null, null, [], null, null, test, writer ? target : null);
+                DateTimeOffset.UtcNow, null, null, $"uat-{id}", null, null, [], null, null, test, targeted ? target : null);
             Save(run); return run;
         }
     }
@@ -152,8 +152,10 @@ public sealed partial class RunStore
             if (request.Status == "passed" && run.Target is { } target &&
                 (request.BuildVersion != target.ExpectedBuildVersion || request.BaseUrl != target.BaseUrl ||
                  request.Identity?.UserId != target.ExpectedUserId || request.Identity.EvidenceKind != "live-application" ||
-                 !Guid.TryParse(request.Identity.DocumentId, out _)))
-                throw new ArgumentException("The tested application, build, account and document must match the run's frozen target.");
+                 (run.ApplicationId == "writerapp" ? !Guid.TryParse(request.Identity.DocumentId, out _) :
+                  !Guid.TryParse(request.Identity.CompanyId, out _) || request.Identity.CompanyId == target.ExpectedCompanyId ||
+                  request.Identity.IsolationCompanyId != target.ExpectedCompanyId || request.Identity.Roles?.Contains(target.ExpectedRole!) != true)))
+                throw new ArgumentException("The tested application, build, account and resource must match the run's frozen target.");
             run = run with { Status = request.Status, CompletedAt = DateTimeOffset.UtcNow,
                 BuildVersion = request.BuildVersion, BaseUrl = request.BaseUrl, Steps = steps,
                 Trace = request.Trace, Error = request.Error, Identity = request.Identity };
@@ -214,7 +216,7 @@ public sealed partial class RunStore
                 .AppendLine($"Application: {run.ApplicationId}\nTest: {run.TestSnapshot.Title} ({run.TestId})")
                 .AppendLine($"Run: {run.Id}\nTested build: {run.BuildVersion ?? "unavailable"}\nEnvironment: {run.BaseUrl ?? "unavailable"}")
                 .AppendLine($"Fixture: {run.FixtureId}\nStep: {step.Title} ({step.Id})\nExpected: {step.Expected}")
-                .AppendLine($"Evidence scope: {run.Identity?.EvidenceKind ?? (run.ApplicationId == "getright" ? "demo" : "unverified")}\nTest account: {run.Identity?.UserId ?? "unavailable"}\nDocument: {run.Identity?.DocumentId ?? "unavailable"}")
+                .AppendLine($"Evidence scope: {run.Identity?.EvidenceKind ?? (run.ApplicationId == "getright" ? "demo" : "unverified")}\nTest account: {run.Identity?.UserId ?? "unavailable"}\nDocument: {run.Identity?.DocumentId ?? "unavailable"}\nCompany: {run.Identity?.CompanyId ?? "unavailable"}\nIsolation reference company: {run.Identity?.IsolationCompanyId ?? "unavailable"}")
                 .AppendLine($"Source revision from build receipt: {run.Target?.SourceCommit ?? "not supplied"}\nSource had local changes: {(run.Target?.SourceCommit is null ? "not recorded" : run.Target.SourceWasDirty.ToString())}")
                 .AppendLine($"Account roles: {string.Join(", ", run.Identity?.Roles ?? [])}")
                 .AppendLine($"Automated result: {run.Status}\nScreenshot: {screenshot ?? "unavailable"}\nTrace: {run.Trace ?? "unavailable"}")

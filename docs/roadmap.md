@@ -8,7 +8,7 @@ Their GitHub definitions are kept in `config/milestones.json`.
 | --- | --- | --- |
 | [1 — WriterApp UAT](https://github.com/johdav999/GetRight/milestone/1) | Five repeatable workflows against isolated WriterApp data, with build/account checks and reviewable evidence. | In progress |
 | [2 — Feedback-to-fix cycle](https://github.com/johdav999/GetRight/milestone/2) | An editable task becomes a Codex worktree job, a verified build and a linked rerun. | Implemented and validated |
-| [3 — Virtual Company UAT](https://github.com/johdav999/GetRight/milestone/3) | The selected business workflow uses dedicated company data and the same UAT cycle. | Planned |
+| [3 — Virtual Company UAT](https://github.com/johdav999/GetRight/milestone/3) | Test-company setup and draft permissions use dedicated company data and the shared UAT cycle. | Implemented and validated |
 | [4 — Operational polish and reliability](https://github.com/johdav999/GetRight/milestone/4) | Repeated cycles, cancellation, recovery, audit, cleanup and comparison work reliably. | Planned |
 
 ## 1 — WriterApp UAT
@@ -68,10 +68,20 @@ job → resulting commit/build → rerun. No automatic merge, deployment or acce
 
 ## 3 — Virtual Company UAT
 
-Choose the first business workflow with the user. Define its local host,
-dedicated company fixture, identities, roles, observable outcome and cleanup.
-Implement the adapter through the shared run/evidence contract and then exercise
-the feedback-to-fix cycle. Expand to further workflows after the first is accepted.
+- [x] Select a first workflow: create a test company, save draft-only email permissions and reopen it.
+- [x] Build an isolated real Web/API host with fresh SQLite, synthetic owner/employee identities and a reference company.
+- [x] Freeze and verify the actual build, account, owner role and reference company before execution.
+- [x] Retain the created company identity, screenshots and trace; verify persistence, employee read/write denial and outsider denial.
+- [x] Use the shared job pipeline to build a changed Virtual Company worktree and rerun the original frozen workflow with fresh data.
+- [x] Validate an actual Codex feedback-to-fix cycle and keep the new acceptance pending.
+
+Validated on 2026-11-02: Codex clarified the English creation description on an
+isolated branch. The resulting build passed the original workflow and a visible
+copy check. Original and changed companies/users were separate, and the sibling
+checkout's HEAD was preserved. The local SQLite harness is not production SQL
+Server or external-provider acceptance. See [Virtual Company UAT](virtual-company-uat.md)
+for setup, attribution, fixture boundaries and cleanup. Expand to further workflows
+after the first is accepted.
 
 Acceptance: the chosen business outcome is repeatable and isolated, evidence
 identifies the running build and role, and a user can review the complete cycle.

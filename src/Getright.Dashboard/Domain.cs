@@ -16,8 +16,10 @@ public record UatRun(string Id, string TestId, string ApplicationId, string Stat
     UatTest TestSnapshot, ApplicationProfile? Target = null, ExecutionIdentity? Identity = null,
     string? ImprovementJobId = null, string? ParentRunId = null);
 public record ApplicationProfile(string ApplicationId, string BaseUrl, string ExpectedBuildVersion,
-    string ExpectedUserId, bool IsolatedDataConfirmed, string? SourceCommit = null, bool SourceWasDirty = false);
-public record ExecutionIdentity(string UserId, string? DocumentId, string EvidenceKind, List<string>? Roles = null);
+    string ExpectedUserId, bool IsolatedDataConfirmed, string? SourceCommit = null, bool SourceWasDirty = false,
+    string? ExpectedCompanyId = null, string? ExpectedRole = null);
+public record ExecutionIdentity(string UserId, string? DocumentId, string EvidenceKind, List<string>? Roles = null,
+    string? CompanyId = null, string? IsolationCompanyId = null);
 public record ApplicationReadiness(bool Ready, string Message, string? RunningVersion = null);
 public record Feedback(string Id, string RunId, string StepId, string Comment,
     string RequestedOutcome, DateTimeOffset CreatedAt, string Prompt);

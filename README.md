@@ -133,3 +133,11 @@ does not touch either target application's repositories or data.
 SQLite files, screenshots, traces, browser auth, local config and build outputs are
 ignored by Git. The linked GitHub repository is public: only sanitized code and
 documentation belong there. No product license has been selected for this starter.
+
+## Virtual Company
+
+Start the dashboard, then run `./scripts/start-virtual-company.ps1`. The launcher
+builds a clean isolated instance and saves its receipt to application setup.
+The first workflow creates a test company, saves draft permissions and verifies
+reopening and access boundaries. See [Virtual Company UAT](docs/virtual-company-uat.md)
+for SDK requirements, fixture boundaries and the opt-in real Codex cycle.

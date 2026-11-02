@@ -10,12 +10,13 @@ flowchart LR
     Worker --> Browser[Playwright Chromium]
     Browser --> Fixture[Isolated Getright fixture]
     Browser --> WriterApp[Isolated WriterApp instance]
+    Browser --> Company[Isolated Virtual Company UI and API]
     Worker --> Evidence[Local screenshots and trace]
     Dashboard --> Evidence
     Dashboard --> Task[Downloadable improvement task]
     Dashboard --> Job[Reviewed improvement job]
     Worker --> Codex[Codex SDK in a Git worktree]
-    Codex --> Build[Commit and build changed WriterApp]
+    Codex --> Build[Commit and build changed application]
     Build --> WriterApp
 ```
 
@@ -45,7 +46,7 @@ This identifies the local fixture. The WriterApp launcher supplies a unique
 assembly version and retains a source receipt; preflight checks its actual version
 endpoint and development identity. Runs freeze that profile, and the worker checks
 it again before creating data and after the workflow. Passing completions must
-match the frozen target/build/account and include the created document identity.
+match the frozen target/build/account and include the created resource identity.
 The source receipt records if the source was dirty; a commit hash alone does not
 identify those uncommitted changes. The milestone 2 worker builds clean source in
 a new worktree, commits its change, assigns a job-specific assembly version and
@@ -109,7 +110,7 @@ Feedback can create a revisioned draft; the explicit Implement action queues it.
 The worker uses the [official Codex SDK](https://learn.chatgpt.com/docs/codex-sdk)
 with the existing local sign-in, workspace-write permissions, disabled command
 network access and no automatic escalation. Task text is not a command template.
-Repository selection and the WriterApp build/launch adapter come from trusted
+Repository selection and the application build/launch adapters come from trusted
 local configuration and fixed worker source.
 
 The worker validates the original clean source revision, creates a short dedicated
@@ -128,3 +129,9 @@ owned operations; shutdown, restart and lost leases retain an interrupted job.
 Any owned in-flight regression run becomes interrupted and rejects stale completion.
 The normal UAT queue retains its separate ten-minute run lease. See
 [improvement jobs](improvement-jobs.md) for the lifecycle and validation scope.
+
+Virtual Company uses the same run/job contract with optional company and role fields.
+Its Getright-owned host composes the actual API through the repository test factory
+and a fresh in-memory SQLite database, with a real Blazor Web UI. A local gateway
+checks the owned Web binary and forwards Blazor WebSockets. See
+[Virtual Company UAT](virtual-company-uat.md) for runtime attribution and limits.

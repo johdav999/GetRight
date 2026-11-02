@@ -9,7 +9,7 @@
   },
   {
     "title": "3 — Virtual Company UAT",
-    "description": "Choose the first business workflow, configure a dedicated company fixture and roles, implement its adapter and evidence capture, and exercise the shared feedback-to-fix cycle. Complete when a real business workflow is repeatable, isolated, and reviewable."
+    "description": "Implemented test-company creation and draft-permission persistence using the real Virtual Company Web/API with disposable SQLite, owner/employee identities and a reference company. Validated role/company boundaries and an actual Codex worktree, changed build and linked passing rerun. Human acceptance remains pending. Production SQL Server and external providers are outside this first workflow."
   },
   {
     "title": "4 — Operational polish and reliability",

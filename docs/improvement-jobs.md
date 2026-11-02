@@ -154,3 +154,12 @@ to “Create a document or open a saved draft to continue writing.” Projects r
 its existing wording. The regression run remains pending human acceptance.
 Existing dependency-audit warnings in WriterApp were recorded in the build logs;
 Getright did not change those dependencies as part of this milestone.
+
+## Virtual Company jobs
+
+The shared job pipeline also supports `virtual-company-test-setup`. Configure the
+trusted `virtual-company.repositoryPath` in the worker configuration. Its fixed
+adapter builds the actual Web/API with a Getright-owned SQLite harness, launches
+a fresh company fixture and verifies company/owner identity. The default build
+timeout is ten minutes for this larger application (a configured global timeout
+still takes precedence). See [Virtual Company UAT](virtual-company-uat.md).

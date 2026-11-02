@@ -27,7 +27,7 @@
     {
         var latest = runs.FirstOrDefault(r => r.TestId == test.Id);
         <article class="test-card @(selectedTest?.Id == test.Id ? "active" : "")">
-            <div class="test-card-top"><span class="app-label">@AppName(test.ApplicationId)</span><span class="badge @test.Readiness">@Label(test.Readiness == "setup-required" && writerConfigured ? "configured" : test.Readiness)</span></div>
+            <div class="test-card-top"><span class="app-label">@AppName(test.ApplicationId)</span><span class="badge @test.Readiness">@Label(test.Readiness == "setup-required" && CanRun(test) ? "configured" : test.Readiness)</span></div>
             <button class="test-title" @onclick="() => Select(test)">@test.Title</button>
             <p>@test.Purpose</p>
             <div class="test-card-bottom"><div><span class="mini-label">AUTOMATED</span><span class="badge @(latest?.Status ?? "not-run")">@Label(latest?.Status ?? "not-run")</span></div><div><span class="mini-label">ACCEPTANCE</span><span class="badge @(latest?.Acceptance ?? "pending")">@Label(latest?.Acceptance ?? "pending")</span></div><button class="run-button" disabled="@(!CanRun(test) || queueing || !RendererInfo.IsInteractive)" @onclick="() => Queue(test)">Run UAT test <span aria-hidden="true">↗</span></button></div>
@@ -41,7 +41,7 @@
         @if (current.Readiness == "draft")
         { <div class="notice">This test is a draft. Configure isolated data, login, build identification and an executable adapter before running it.</div> }
         @if (current.Readiness == "setup-required")
-        { <div class="notice">This adapter tests an actual local WriterApp instance. <a href="/applications">Configure its build, account and isolated data</a> before running. The connection is checked again for each run.</div> }
+        { <div class="notice">This adapter tests an actual local application instance. <a href="/applications">Configure its build, account and isolated data</a> before running. The connection is checked again for each run.</div> }
         <ol class="steps">@foreach (var step in current.Steps) { <li><strong>@step.Title</strong><p>@step.Expected</p></li> }</ol>
         <div class="review-question"><span class="mini-label">HUMAN REVIEW</span><p>@current.ReviewQuestion</p></div>
         <h3>Run history</h3>
@@ -60,7 +60,7 @@
     private UatTest? selectedTest;
     private string filter = "all";
     private string? message;
-    private bool writerConfigured, queueing;
+    private bool writerConfigured, companyConfigured, queueing;
     private readonly CancellationTokenSource stop = new();
     private Task? polling;
     protected override void OnInitialized()
@@ -73,8 +73,8 @@
         try { while (await timer.WaitForNextTickAsync(stop.Token)) await InvokeAsync(() => { Refresh(); StateHasChanged(); }); }
         catch (OperationCanceledException) { }
     }
-    private void Refresh() { runs = Store.List(); writerConfigured = Store.Profile("writerapp") is not null; }
-    private bool CanRun(UatTest test) => test.Readiness == "ready" || (test.Adapter == "writerapp-create-save" && writerConfigured);
+    private void Refresh() { runs = Store.List(); writerConfigured = Store.Profile("writerapp") is not null; companyConfigured = Store.Profile("virtual-company") is not null; }
+    private bool CanRun(UatTest test) => test.Readiness == "ready" || (test.Adapter == "writerapp-create-save" && writerConfigured) || (test.Adapter == "virtual-company-test-setup" && companyConfigured);
     private void Select(UatTest test) => selectedTest = test;
     private string AppName(string id) => Catalogue.Value.Applications.First(a => a.Id == id).Name;
     public static string Label(string value) => value switch { "not-run" => "Not run", "setup-required" => "Setup required", "awaiting-review" => "Awaiting review", "improvements-requested" => "Improvements requested", _ => char.ToUpperInvariant(value[0]) + value[1..] };

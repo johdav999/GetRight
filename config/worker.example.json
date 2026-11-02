@@ -1,5 +1,6 @@
 {
   "writerapp": { "repositoryPath": "../WriterApp" },
+  "virtual-company": { "repositoryPath": "../Virtual Company" },
   "worktreeRoot": "worktrees",
   "codexTimeoutMs": 1800000,
   "buildTimeoutMs": 300000

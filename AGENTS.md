@@ -32,3 +32,7 @@ README.md and docs/architecture.md before changing the execution workflow.
 - `npm run smoke:cycle --prefix worker` is opt-in: it invokes real Codex and builds
   WriterApp. Keep its commits/worktrees local and leave human acceptance pending.
 - Review both the dashboard flow and failure handling for execution changes.
+
+- Virtual Company contracts: `npm run smoke:virtual-company --prefix worker`.
+- Real Virtual Company: `npm run smoke:virtual-company:live --prefix worker`; add
+  `-- --cycle` to invoke real Codex. Use disposable data and retain pending acceptance.

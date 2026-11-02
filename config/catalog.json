@@ -53,10 +53,35 @@
       "steps": [ { "id": "retry", "title": "Fail a save, restore service and retry", "expected": "Unsaved edits remain available and the retry persists them." } ]
     },
     {
-      "id": "virtual-company-workflow", "applicationId": "virtual-company", "title": "First business workflow",
-      "purpose": "Choose the first business workflow, then define company fixtures, roles, steps and expected results.", "readiness": "draft", "adapter": null,
+      "id": "virtual-company-workflow",
+      "applicationId": "virtual-company",
+      "title": "Create a test company and save permissions",
+      "purpose": "Create a synthetic company, save draft-email permissions, reopen it and verify owner access and company isolation.",
+      "readiness": "setup-required",
+      "adapter": "virtual-company-test-setup",
       "reviewQuestion": "Can the intended user complete this business workflow confidently?",
-      "steps": [ { "id": "workflow", "title": "Define the selected business workflow", "expected": "A repeatable business outcome is specified before enabling this test." } ]
+      "steps": [
+        {
+          "id": "workflow",
+          "title": "Open test-company creation",
+          "expected": "The isolated owner can create a synthetic company."
+        },
+        {
+          "id": "create",
+          "title": "Create and select a company",
+          "expected": "A unique test company is created with external actions blocked."
+        },
+        {
+          "id": "permissions",
+          "title": "Save draft-only permissions",
+          "expected": "Draft permission is saved; sending remains disabled."
+        },
+        {
+          "id": "reopen",
+          "title": "Reopen and verify isolation",
+          "expected": "Permissions persist, the reference company is unchanged, and the employee cannot access owner controls."
+        }
+      ]
     }
   ]
 }

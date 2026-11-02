@@ -62,12 +62,12 @@ public sealed partial class RunStore
     }
     private static string? Blocker(UatRun run)
     {
-        if (run.ApplicationId != "writerapp" || run.TestSnapshot.Adapter != "writerapp-create-save")
-            return "Implementation jobs currently support WriterApp's create/save/reopen workflow.";
+        if (!ApplicationSetup.Supported(run.ApplicationId, run.TestSnapshot.Adapter))
+            return "This workflow does not have an implementation adapter.";
         if (run.Target is not { } target || !JobStates.Hash(target.SourceCommit) || target.SourceWasDirty)
-            return "Run a clean committed WriterApp build and import its build receipt before implementing. This run has no reproducible clean source revision.";
+            return "Run a clean committed application build and import its build receipt before implementing. This run has no reproducible clean source revision.";
         if (run.BuildVersion != target.ExpectedBuildVersion || run.Identity?.UserId != target.ExpectedUserId || run.Identity.EvidenceKind != "live-application")
-            return "This run did not verify the configured WriterApp build and account.";
+            return "This run did not verify the configured application build and account.";
         return null;
     }
     public ImprovementJob CreateJob(string runId, string feedbackId)

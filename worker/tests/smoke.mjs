@@ -139,7 +139,7 @@ try {
   await page.getByLabel('Local application URL', { exact: true }).fill(profile.baseUrl);
   await page.getByLabel('Expected build version', { exact: true }).fill(profile.expectedBuildVersion);
   await page.getByLabel('Dedicated UAT account ID', { exact: true }).fill(profile.expectedUserId);
-  await page.getByRole('checkbox').check();
+  await page.getByRole('checkbox', { name: 'This instance uses isolated UAT data' }).check();
   await page.getByRole('button', { name: 'Check connection', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Ready:');
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile setup must not overflow');

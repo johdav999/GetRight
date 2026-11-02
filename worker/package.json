@@ -14,7 +14,9 @@
     "smoke:writerapp": "node tests/writerapp-live.mjs",
     "smoke:jobs": "node tests/jobs-smoke.mjs",
     "smoke:cycle": "node tests/cycle-live.mjs",
-    "browsers": "playwright install chromium"
+    "browsers": "playwright install chromium",
+    "smoke:virtual-company": "node tests/virtual-company-smoke.mjs",
+    "smoke:virtual-company:live": "node tests/virtual-company-live.mjs"
   },
   "dependencies": {
     "@openai/codex-sdk": "0.166.0",

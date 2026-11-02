@@ -7,7 +7,9 @@ public sealed class ApplicationSetup(RunStore store, UatCatalogue catalogue, ILo
 {
     public static void Validate(ApplicationProfile profile)
     {
-        if (profile.ApplicationId != "writerapp") throw new ArgumentException("Only WriterApp setup is supported in milestone 1.");
+        if (profile.ApplicationId is not ("writerapp" or "virtual-company")) throw new ArgumentException("Unknown application setup.");
+        if (profile.ApplicationId == "virtual-company" && (!Guid.TryParse(profile.ExpectedCompanyId, out _) || profile.ExpectedRole != "owner"))
+            throw new ArgumentException("Virtual Company requires the isolated reference company ID and owner role from its launch receipt.");
         if (!Uri.TryCreate(profile.BaseUrl, UriKind.Absolute, out var url) || url.Scheme != "http" ||
             !url.IsLoopback || url.UserInfo != "" || url.AbsolutePath != "/" || url.Query != "" || url.Fragment != "" ||
             !(url.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
@@ -24,7 +26,7 @@ public sealed class ApplicationSetup(RunStore store, UatCatalogue catalogue, ILo
     public async Task<ApplicationReadiness> Check(string applicationId, CancellationToken cancellationToken = default)
     {
         var profile = store.Profile(applicationId);
-        if (profile is null) return new(false, "Configure the local WriterApp instance first.");
+        if (profile is null) return new(false, "Configure the local application instance first.");
         return await Check(profile, cancellationToken);
     }
     private async Task<ApplicationReadiness> Check(ApplicationProfile profile, CancellationToken cancellationToken)
@@ -34,6 +36,19 @@ public sealed class ApplicationSetup(RunStore store, UatCatalogue catalogue, ILo
             { BaseAddress = new Uri(profile.BaseUrl), Timeout = TimeSpan.FromSeconds(5) };
         try
         {
+            if (profile.ApplicationId == "virtual-company")
+            {
+                using var response = await client.GetAsync("/_getright/runtime", cancellationToken);
+                if (!response.IsSuccessStatusCode) return new(false, "Virtual Company UAT runtime is unavailable.");
+                using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+                var root = document.RootElement;
+                bool Match(string key, string? expected) => root.ValueKind == JsonValueKind.Object && root.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String && value.GetString() == expected;
+                if (!Match("version", profile.ExpectedBuildVersion) || !Match("userId", profile.ExpectedUserId) ||
+                    !Match("companyId", profile.ExpectedCompanyId) || !Match("role", profile.ExpectedRole) ||
+                    !root.TryGetProperty("isolated", out var isolated) || isolated.ValueKind != JsonValueKind.True)
+                    return new(false, "Virtual Company build, owner, reference company or isolation does not match. No test data was created.");
+                return new(true, "Ready: isolated Virtual Company build, company and owner match.", profile.ExpectedBuildVersion);
+            }
             using var versionResponse = await client.GetAsync("/api/app/version", cancellationToken);
             if (!versionResponse.IsSuccessStatusCode) return new(false, "WriterApp did not return its build version. Check the local instance and sign-in setup.");
             using var version = await JsonDocument.ParseAsync(await versionResponse.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
@@ -52,18 +67,21 @@ public sealed class ApplicationSetup(RunStore store, UatCatalogue catalogue, ILo
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            logger.LogWarning("WriterApp readiness failed: {FailureType}: {Detail}", exception.GetType().Name, exception.Message);
-            return new(false, "Cannot verify the local WriterApp instance. Check that it is running and returning the expected version and account.");
+            logger.LogWarning("{Application} readiness failed: {FailureType}: {Detail}", profile.ApplicationId, exception.GetType().Name, exception.Message);
+            return new(false, "Cannot verify the local application instance. Check that it is running and returning the expected version and account.");
         }
     }
     public async Task<UatRun> Queue(string testId, CancellationToken cancellationToken = default)
     {
         var test = catalogue.Get(testId);
-        if (test.ApplicationId != "writerapp") return store.Queue(testId);
-        if (test.Adapter != "writerapp-create-save") throw new ArgumentException("This workflow's adapter is not implemented yet.");
-        var profile = store.Profile("writerapp") ?? throw new ArgumentException("Configure the local WriterApp instance first.");
+        if (test.ApplicationId == "getright") return store.Queue(testId);
+        if (!Supported(test.ApplicationId, test.Adapter)) throw new ArgumentException("This workflow's adapter is not implemented yet.");
+        var profile = store.Profile(test.ApplicationId) ?? throw new ArgumentException("Configure the local application instance first.");
         var readiness = await Check(profile, cancellationToken);
         if (!readiness.Ready) throw new ArgumentException(readiness.Message);
         return store.Queue(testId, profile);
     }
+    public static bool Supported(string applicationId, string? adapter) =>
+        (applicationId == "writerapp" && adapter == "writerapp-create-save") ||
+        (applicationId == "virtual-company" && adapter == "virtual-company-test-setup");
 }
