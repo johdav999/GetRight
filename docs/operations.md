@@ -136,3 +136,7 @@ The live Virtual Company check is in
 `.local/vc-live-1793609547531/cycle-report.json` and kept application acceptance
 pending. Final comparison layout captures are retained in
 `.local/operations-visual-1793609798363/`. These local artifacts are ignored by Git.
+
+CI and `global.json` pin SDK 10.0.400 because SDK patch changes can change the
+implicit ASP.NET asset package and invalidate locked restore. Upgrade the SDK
+and regenerate/review its lock file together, then run the full suite.

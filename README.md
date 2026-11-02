@@ -36,7 +36,7 @@ Draft tests are disabled. Codex starts only after the explicit Implement action.
 
 ## Requirements
 
-- .NET 10 SDK (the pinned SDK policy allows installed .NET 10 feature bands).
+- .NET SDK 10.0.400, matching global.json and the CI build.
 - Node.js 24 or later, with npm.
 - Playwright Chromium, installed by the command below.
 - Windows PowerShell for the convenience scripts. The underlying .NET and Node
