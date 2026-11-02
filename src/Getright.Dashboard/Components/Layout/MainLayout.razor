@@ -4,8 +4,9 @@
     <aside class="sidebar">
         <a class="brand" href="/" aria-label="Getright home"><span class="brand-icon">g.</span> Getright</a>
         <p class="sidebar-caption">UAT WORKSPACE</p>
-        <a class="nav-current" href="/"><span aria-hidden="true">▦</span> Test control room</a>
-        <a class="nav-link" href="/applications">Application setup</a>
+        <NavLink class="nav-link" ActiveClass="nav-current" href="/" Match="NavLinkMatch.All"><span aria-hidden="true">▦</span> Test control room</NavLink>
+        <NavLink class="nav-link" ActiveClass="nav-current" href="/jobs">Improvement jobs</NavLink>
+        <NavLink class="nav-link" ActiveClass="nav-current" href="/applications">Application setup</NavLink>
         <div class="sidebar-bottom"><span class="online-dot"></span> Local development<br /><small>Your evidence stays on this computer.</small></div>
     </aside>
     <main>@Body</main>

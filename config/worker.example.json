@@ -1,0 +1,6 @@
+{
+  "writerapp": { "repositoryPath": "../WriterApp" },
+  "worktreeRoot": "worktrees",
+  "codexTimeoutMs": 1800000,
+  "buildTimeoutMs": 300000
+}

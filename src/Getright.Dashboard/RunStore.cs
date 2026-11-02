@@ -6,7 +6,7 @@ namespace Getright.Dashboard;
 
 // One dashboard process owns the local database. Each mutation is serialized and
 // writes a complete snapshot, retaining the test definition used for that run.
-public sealed class RunStore
+public sealed partial class RunStore
 {
     private readonly object gate = new();
     private readonly string connectionString;
@@ -34,7 +34,7 @@ public sealed class RunStore
         command.ExecuteNonQuery();
         command.CommandText = "PRAGMA user_version";
         var schemaVersion = Convert.ToInt32(command.ExecuteScalar());
-        if (schemaVersion > 2) throw new InvalidOperationException("This database requires a newer Getright version.");
+        if (schemaVersion > 3) throw new InvalidOperationException("This database requires a newer Getright version.");
         using (var transaction = db.BeginTransaction())
         {
             command.Transaction = transaction;
@@ -52,12 +52,24 @@ public sealed class RunStore
                 command.CommandText = "CREATE TABLE application_profiles (id TEXT PRIMARY KEY, payload TEXT NOT NULL); PRAGMA user_version=2;";
                 command.ExecuteNonQuery();
             }
+            if (schemaVersion < 3)
+            {
+                command.CommandText = """
+                    CREATE TABLE improvement_jobs (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), feedback_id TEXT NOT NULL REFERENCES feedback(id), payload TEXT NOT NULL, lease TEXT, lease_expires TEXT);
+                    CREATE TABLE job_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES improvement_jobs(id), created_at TEXT NOT NULL, stage TEXT NOT NULL, message TEXT NOT NULL);
+                    CREATE INDEX job_events_job ON job_events(job_id, sequence);
+                    PRAGMA user_version=3;
+                    """;
+                command.ExecuteNonQuery();
+            }
             transaction.Commit();
         }
         // A restarted dashboard cannot vouch for workers from the old process.
         foreach (var run in List().Where(r => r.Status == "running"))
             Save(run with { Status = "interrupted", CompletedAt = DateTimeOffset.UtcNow,
                 Error = "Dashboard restarted during execution. Queue a new run." });
+        foreach (var job in ReadJobs().Where(j => JobStates.Active(j.Status)))
+            EndJob(job, "interrupted", "Dashboard restarted. The worktree is retained; create a new job to retry.");
     }
 
     private SqliteConnection Open() { var db = new SqliteConnection(connectionString); db.Open(); return db; }

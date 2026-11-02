@@ -7,12 +7,14 @@ import { writerAppAdapter } from './writerapp.mjs';
 // Adapter IDs are allowlisted in source. The API cannot submit executable code,
 // shell commands or arbitrary navigation targets to this local worker.
 export async function executeRun(claim, configuration) {
+  configuration.signal?.throwIfAborted();
   const { run, lease } = claim;
   if (!/^[a-f0-9]{32}$/.test(run.id) || run.fixtureId !== `uat-${run.id}`) throw new Error('Invalid run identity.');
   const directory = path.join(configuration.dataPath, 'evidence', run.id);
   await mkdir(directory, { recursive: true });
   const result = { lease, status: 'failed', buildVersion: null, baseUrl: configuration.dashboardUrl, steps: [], trace: null, error: null };
   let browser, context, currentStep, adapter;
+  const abortBrowser = () => { void browser?.close().catch(() => {}); };
   const pageErrors = [];
   try {
     const demo = run.testSnapshot.adapter === 'getright-save-note' && run.applicationId === 'getright';
@@ -24,6 +26,8 @@ export async function executeRun(claim, configuration) {
       result.buildVersion = health.version;
     }
     browser = await chromium.launch({ headless: configuration.headless, slowMo: configuration.headless ? 0 : 200 });
+    configuration.signal?.addEventListener('abort', abortBrowser, { once: true });
+    configuration.signal?.throwIfAborted();
     context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     context.setDefaultTimeout(15_000);
     await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
@@ -61,6 +65,7 @@ export async function executeRun(claim, configuration) {
       await context.route('**/*', route => new URL(route.request().url()).origin === adapter.origin ? route.continue() : route.abort('blockedbyclient'));
     }
     for (const step of run.testSnapshot.steps) {
+      configuration.signal?.throwIfAborted();
       currentStep = step.id;
       if (!Object.hasOwn(actions, step.id)) throw new Error(`Unregistered adapter step: ${step.id}`);
       await actions[step.id]();
@@ -89,6 +94,8 @@ export async function executeRun(claim, configuration) {
       catch (error) { result.status = 'failed'; result.error ??= `Trace capture failed: ${error.message}`; }
     }
     await browser?.close().catch(() => {});
+    configuration.signal?.removeEventListener('abort', abortBrowser);
   }
+  configuration.signal?.throwIfAborted();
   return api(configuration.dashboardUrl, `/api/runs/${run.id}/complete`, result);
 }

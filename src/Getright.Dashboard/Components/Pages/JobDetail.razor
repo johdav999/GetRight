@@ -1,0 +1,76 @@
+@page "/jobs/{Id}"
+@inject RunStore Store
+@implements IAsyncDisposable
+
+<PageTitle>Implementation review · Getright</PageTitle>
+<div class="topbar"><a href="/jobs">Improvement jobs</a><span>Implementation review</span></div>
+@if (job is null) { <h1>Job unavailable</h1><p role="alert">@error</p> }
+else
+{
+    <header class="page-header"><div><p class="eyebrow">@job.ApplicationId · JOB @job.Id[..8]</p><h1>Implementation review</h1><p class="muted">Review the task, implement it in a worktree, then inspect the regression result.</p></div><span class="badge @job.Status">@Home.Label(job.Status)</span></header>
+    <div class="review-actions"><a href="/runs/@job.OriginalRunId">Original run and feedback</a>@if (job.RerunId is { } rerunId) { <a href="/runs/@rerunId">New regression run</a> }</div>
+    @if (job.StartBlocker is { } blocker) { <div class="notice">@blocker</div> }
+    @if (job.Error is { } failure) { <div class="notice error" role="alert">@failure</div> }
+    @if (job.CancelRequested && JobStates.Active(job.Status)) { <div class="notice">Cancellation requested. The worker is stopping its owned processes.</div> }
+    <div class="workspace-grid">
+    <section class="panel review-panel"><div class="panel-heading"><h2>Implementation task</h2></div>
+        <label for="job-prompt">Task prompt</label><textarea id="job-prompt" class="job-prompt" rows="18" @bind="prompt" @bind:event="oninput" maxlength="24000" disabled="@(job.Status != "draft" || !RendererInfo.IsInteractive)"></textarea>
+        @if (job.Status == "draft")
+        {
+            <div class="review-actions"><button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="Save">Save task</button><button disabled="@(!RendererInfo.IsInteractive || job.StartBlocker is not null || prompt.Trim() != job.Prompt)" @onclick="Start">Implement improvement</button></div>
+            <p class="muted">Save edits before implementing. The local worker will create a dedicated worktree, run Codex, commit the change, build it and rerun the original test.</p>
+        }
+        @if (job.Status is "draft" or "queued" || JobStates.Active(job.Status)) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || job.CancelRequested)" @onclick="Cancel">Cancel job</button> }
+        @if (error is not null) { <p class="error-text" role="alert">@error</p> }
+        @if (notice is not null) { <p role="status">@notice</p> }
+        @if (job.Summary is { } summary) { <h3>Codex result</h3><p class="preserve-lines">@summary</p> }
+        <dl class="metadata"><div><dt>Base commit</dt><dd>@(job.BaseCommit ?? "Not recorded")</dd></div><div><dt>Result commit</dt><dd>@(job.ResultCommit ?? "Not recorded yet")</dd></div><div><dt>Tested build</dt><dd>@(job.BuildVersion ?? "Not built yet")</dd></div><div><dt>Codex thread</dt><dd>@(job.ThreadId ?? "Not started yet")</dd></div><div><dt>Worktree</dt><dd>@(job.WorktreePath ?? "Not prepared yet")</dd></div></dl>
+        @if (job.WorktreePath is not null)
+        { <div class="artifact-links">@foreach (var file in new[] { "codex.log", "build.log", "launch.log", "diff.patch", "summary.json" }) { if (Store.JobArtifactPath(job.Id, file) is { } artifact && System.IO.File.Exists(artifact)) { <a href="/api/jobs/@job.Id/artifacts/@file">@file</a> } }</div> }
+        <div class="notice">The worktree and logs stay local for review. A completed job leaves the new run's human acceptance pending.</div>
+    </section>
+    <section class="panel"><div class="panel-heading"><h2>Live progress</h2><span class="counter">@events.Count</span></div><ol class="job-events">@foreach (var item in events) { <li><span class="mini-label">@item.CreatedAt.ToLocalTime().ToString("T") · @item.Stage</span><p>@item.Message</p></li> }</ol></section>
+    </div>
+    @if (job.RerunId is { } comparisonId)
+    {
+        var original = Store.Get(job.OriginalRunId); var rerun = Store.Get(comparisonId);
+        <section class="panel comparison"><div class="panel-heading"><h2>Original and changed evidence</h2><a href="/runs/@rerun.Id">Review the new run</a></div><p class="comparison-status">Original: @Home.Label(original.Status) / @Home.Label(original.Acceptance). New: @Home.Label(rerun.Status) / @Home.Label(rerun.Acceptance).</p>
+        @foreach (var step in original.TestSnapshot.Steps)
+        {
+            var before = original.Steps.FirstOrDefault(s => s.StepId == step.Id); var after = rerun.Steps.FirstOrDefault(s => s.StepId == step.Id);
+            <article class="comparison-step"><h3>@step.Title</h3><div class="compare-images"><div><span class="mini-label">ORIGINAL · @original.BuildVersion</span>@if (before?.Screenshot is { } oldShot) { <a href="/api/evidence/@oldShot" target="_blank"><img src="/api/evidence/@oldShot" alt="Original @step.Title" loading="lazy" /></a> } else { <p>No screenshot available.</p> }</div><div><span class="mini-label">CHANGED · @rerun.BuildVersion</span>@if (after?.Screenshot is { } newShot) { <a href="/api/evidence/@newShot" target="_blank"><img src="/api/evidence/@newShot" alt="Changed @step.Title" loading="lazy" /></a> } else { <p>No screenshot available yet.</p> }</div></div></article>
+        }
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+    private ImprovementJob? job;
+    private readonly List<JobEvent> events = [];
+    private string prompt = "";
+    private string? error, notice;
+    private readonly CancellationTokenSource stop = new();
+    private Task? polling;
+    private string loadedId = "";
+    protected override void OnParametersSet()
+    {
+        if (loadedId != Id) { loadedId = Id; job = null; events.Clear(); prompt = ""; }
+        Load(); polling ??= Poll();
+    }
+    private void Load()
+    {
+        try { var latest = Store.Job(Id); if (job is null || latest.Status != "draft") prompt = latest.Prompt; job = latest; events.AddRange(Store.JobEvents(Id, events.LastOrDefault()?.Sequence ?? 0)); if (events.Count > 200) events.RemoveRange(0, events.Count - 200); }
+        catch (ArgumentException exception) { error = exception.Message; }
+    }
+    private void Save() { try { job = Store.EditJob(Id, new EditJobRequest(prompt, job!.Revision)); prompt = job.Prompt; error = null; notice = "Task saved."; Load(); } catch (ArgumentException exception) { error = exception.Message; } }
+    private void Start() { try { job = Store.StartJob(Id, job!.Revision); error = null; notice = "Implementation queued for the local worker."; Load(); } catch (ArgumentException exception) { error = exception.Message; } }
+    private void Cancel() { try { job = Store.CancelJob(Id); error = null; Load(); } catch (ArgumentException exception) { error = exception.Message; } }
+    private async Task Poll()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try { while (await timer.WaitForNextTickAsync(stop.Token)) await InvokeAsync(() => { Load(); StateHasChanged(); }); }
+        catch (OperationCanceledException) { }
+    }
+    public async ValueTask DisposeAsync() { await stop.CancelAsync(); if (polling is not null) await polling; stop.Dispose(); }
+}

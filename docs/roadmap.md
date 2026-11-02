@@ -7,7 +7,7 @@ Their GitHub definitions are kept in `config/milestones.json`.
 | Milestone | Outcome | Status |
 | --- | --- | --- |
 | [1 — WriterApp UAT](https://github.com/johdav999/GetRight/milestone/1) | Five repeatable workflows against isolated WriterApp data, with build/account checks and reviewable evidence. | In progress |
-| [2 — Feedback-to-fix cycle](https://github.com/johdav999/GetRight/milestone/2) | An editable task becomes a Codex worktree job, a verified build and a linked rerun. | Planned |
+| [2 — Feedback-to-fix cycle](https://github.com/johdav999/GetRight/milestone/2) | An editable task becomes a Codex worktree job, a verified build and a linked rerun. | Implemented and validated |
 | [3 — Virtual Company UAT](https://github.com/johdav999/GetRight/milestone/3) | The selected business workflow uses dedicated company data and the same UAT cycle. | Planned |
 | [4 — Operational polish and reliability](https://github.com/johdav999/GetRight/milestone/4) | Repeated cycles, cancellation, recovery, audit, cleanup and comparison work reliably. | Planned |
 
@@ -41,6 +41,21 @@ and `docs/writing-tools-redesign-uat.md`; inspect current source before adapting
 
 ## 2 — Feedback-to-fix cycle
 
+- [x] Persist editable task drafts with revision checks and explicit implementation.
+- [x] Create an isolated worktree at the original tested source commit.
+- [x] Run the real Codex SDK, stream progress and retain the thread ID.
+- [x] Commit the change locally and capture bounded build/start logs.
+- [x] Verify the changed runtime version and rerun the original frozen test.
+- [x] Link original run, feedback, job, resulting commit/build and regression run.
+- [x] Present before/after evidence with new human acceptance pending.
+- [x] Validate failures, cancellation, lease expiry and restart recovery.
+- [x] Complete an actual WriterApp feedback-to-fix cycle through Codex.
+
+Validated on 2026-11-02: Codex corrected the Documents library subtitle on a local
+worktree branch, the changed build passed create/save/reopen checks, and the new
+run stayed pending acceptance. The original WriterApp checkout/branch was preserved.
+See [improvement jobs](improvement-jobs.md) for usage and validation scope.
+
 Persist editable improvement jobs linked to feedback and the original run. Start
 Codex only from an explicit Implement action, using a new Git worktree at a
 recorded base commit. Stream progress and errors, retain thread/job IDs, and
@@ -63,7 +78,7 @@ identifies the running build and role, and a user can review the complete cycle.
 
 ## 4 — Operational polish and reliability
 
-Add worker heartbeat and cancellation, lease recovery, review audit history,
+Extend heartbeat/cancellation and process supervision to standalone UAT runs; add review audit history,
 pagination, evidence retention, before/after comparison and worktree cleanup.
 Exercise failure and restart paths and polish the real user flows. Add remote
 dashboard/worker authentication only if hosted operation becomes a requirement.

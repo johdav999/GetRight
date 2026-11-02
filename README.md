@@ -10,8 +10,8 @@ Repository: [johdav999/GetRight](https://github.com/johdav999/GetRight).
 
 ## Implementation status
 
-This repository includes the foundation and the first milestone 1 integration
-slice. It includes:
+This repository includes the foundation, the first WriterApp workflow, and
+milestone 2's feedback-to-fix implementation. It includes:
 
 - A .NET 10 Blazor dashboard with application filters, readable test steps and run history.
 - SQLite persistence for test snapshots, results, review decisions and feedback.
@@ -22,12 +22,15 @@ slice. It includes:
 - WriterApp application setup, runtime build/account checks, and a create/save/reopen
   adapter against an actual isolated WriterApp instance.
 - Four remaining draft WriterApp tests and one draft Virtual Company workflow.
+- Editable Codex jobs, isolated worktrees/commits, streamed progress, bounded build
+  and launch logs, runtime version checks, linked reruns and before/after evidence.
+- Job cancellation, heartbeat leases and restart recovery.
 - Build checks, a browser/API smoke check, GitHub Actions and an issue template.
 
 **Not implemented yet:** the remaining WriterApp adapters, external/multi-user login,
-Virtual Company execution, Codex jobs, worktree build/launch management and linked
-reruns. These are tracked in the [four-milestone roadmap](docs/roadmap.md).
-Draft tests are disabled. Creating feedback exports a task; it does not launch Codex.
+Virtual Company execution, broader operational polish, retention and automatic
+worktree cleanup. These are tracked in the [four-milestone roadmap](docs/roadmap.md).
+Draft tests are disabled. Codex starts only after the explicit Implement action.
 
 ## Requirements
 
@@ -61,6 +64,9 @@ the trace. Accept the run, or choose a step and create an improvement task.
 For WriterApp, follow [the isolated host and setup instructions](docs/writerapp-uat.md).
 Its first adapter has been verified against an actual local build. Milestone 1
 remains in progress until all five workflows are implemented and validated.
+
+For feedback implementation, see [Codex improvement jobs](docs/improvement-jobs.md).
+Use a clean committed baseline and import its receipt before requesting a job.
 
 Use `npx --prefix worker playwright show-trace <path-to-trace.zip>` to inspect a
 downloaded trace. Task prompts and traces remain local unless you share them.
@@ -106,6 +112,7 @@ dotnet restore Getright.sln --locked-mode
 dotnet build Getright.sln --configuration Release --no-restore --warnaserror
 npm test --prefix worker
 npm run smoke --prefix worker
+npm run smoke:jobs --prefix worker
 ```
 
 The smoke check starts its own temporary dashboard on a free loopback port and
@@ -120,6 +127,7 @@ does not touch either target application's repositories or data.
 - [Architecture and trust boundary](docs/architecture.md)
 - [API and runner contract](docs/contracts.md)
 - [Milestones and application integration](docs/roadmap.md)
+- [Codex jobs and linked reruns](docs/improvement-jobs.md)
 - [Contributor instructions](AGENTS.md)
 
 SQLite files, screenshots, traces, browser auth, local config and build outputs are

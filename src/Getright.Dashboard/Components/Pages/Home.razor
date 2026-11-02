@@ -52,7 +52,7 @@
     }
 </section>
 </div>
-<div class="setup-note"><strong>Start the local worker to execute queued tests.</strong><code>npm run start --prefix worker</code><span>Feedback creates a task draft. Codex implementation is the next milestone.</span></div>
+<div class="setup-note"><strong>Start the local worker to execute queued tests and jobs.</strong><code>npm run start --prefix worker</code><span>Open feedback to prepare an editable Codex job. Implementation starts only after you request it.</span></div>
 @if (message is not null) { <div class="toast" role="status">@message <button @onclick="() => message = null" aria-label="Dismiss notification">×</button></div> }
 
 @code {
@@ -77,7 +77,7 @@
     private bool CanRun(UatTest test) => test.Readiness == "ready" || (test.Adapter == "writerapp-create-save" && writerConfigured);
     private void Select(UatTest test) => selectedTest = test;
     private string AppName(string id) => Catalogue.Value.Applications.First(a => a.Id == id).Name;
-    public static string Label(string value) => value switch { "not-run" => "Not run", "setup-required" => "Setup required", "improvements-requested" => "Improvements requested", _ => char.ToUpperInvariant(value[0]) + value[1..] };
+    public static string Label(string value) => value switch { "not-run" => "Not run", "setup-required" => "Setup required", "awaiting-review" => "Awaiting review", "improvements-requested" => "Improvements requested", _ => char.ToUpperInvariant(value[0]) + value[1..] };
     private async Task Queue(UatTest test)
     {
         queueing = true;

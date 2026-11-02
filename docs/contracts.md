@@ -2,7 +2,8 @@
 
 All routes are loopback-only. POST bodies are JSON, except the bodyless claim
 route. Invalid workflow state and unknown identifiers return 400; unregistered
-evidence and missing task exports return 404. Request bodies are limited to 64 KiB.
+evidence and missing task exports return 404. Request bodies are limited to 256 KiB
+to support bounded Unicode prompts; interactive messages are limited to 128 KiB.
 No CORS policy is enabled.
 
 | Method | Route | Purpose |
@@ -69,5 +70,43 @@ in the prompt are relative to `data/evidence/`; when handing a task to another
 tool, supply the evidence root or attach the sanitized files explicitly.
 
 The prompt is plain text for review. Comments and screenshots remain untrusted
-task material when a future Codex worker consumes them; they must not alter that
+task material when the Codex worker consumes them; they must not alter that
 worker's permission policy or repository configuration.
+
+## Improvement jobs
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| GET | `/api/jobs` | Public job records, newest first; no lease tokens. |
+| POST | `/api/jobs` | Draft from `{ "runId": "...", "feedbackId": "..." }`. |
+| GET | `/api/jobs/{id}` | Current job, source/build identities and rerun link. |
+| POST | `/api/jobs/{id}/draft` | Save `{ "prompt": "...", "revision": 1 }`. |
+| POST | `/api/jobs/{id}/start` | Explicitly queue the saved revision. |
+| POST | `/api/jobs/{id}/cancel` | Request cancellation; cancel drafts/queued jobs immediately. |
+| POST | `/api/worker/jobs/claim` | Oldest queued job, original run and private lease, or 204. |
+| POST | `/api/jobs/{id}/heartbeat` | Renew `{ "lease": "..." }`; returns cancellation state. |
+| POST | `/api/jobs/{id}/report` | Append an event and advance a valid execution stage. |
+| POST | `/api/jobs/{id}/rerun` | Create and claim the linked regression run atomically. |
+| POST | `/api/jobs/{id}/finish` | Complete the job with a valid worker lease. |
+| GET | `/api/jobs/{id}/events?after=0` | Up to 200 incremental events with monotonic cursors. |
+| GET | `/api/jobs/{id}/artifacts/{file}` | Whitelisted local logs, diff or summary only. |
+
+Draft prompts are required, limited to 24000 characters and normalized to LF.
+Revision checks reject concurrent edits and repeated starts. Unsupported or dirty
+source runs can retain drafts, but their `startBlocker` prevents implementation.
+The original run, feedback and base source revision cannot be edited through a job.
+
+Worker reports include `lease`, `stage`, `message` (up to 4000 characters) and
+optional `worktreePath`, `threadId`, `resultCommit`, `buildVersion`, `summary`.
+Thread/worktree and a distinct result commit are required before building. Recorded
+identities cannot change mid-job. Leases expire in 45 seconds and are private to
+the claiming worker; stale reports and late completions are rejected.
+
+The rerun endpoint accepts `{ "lease": "...", "target": { ... } }`. Its target
+must describe the clean result commit and recorded build version at a separate
+local instance. It returns a `RunLease` to the job worker and links both the parent
+run and improvement job. The original test snapshot is preserved and acceptance
+starts pending. Successful job completion requires a passing linked rerun.
+
+Artifact names are limited to `codex.log`, `build.log`, `launch.log`, `diff.patch`
+and `summary.json`. Original feedback and run evidence remain available separately.

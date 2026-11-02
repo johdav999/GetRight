@@ -13,14 +13,18 @@ flowchart LR
     Worker --> Evidence[Local screenshots and trace]
     Dashboard --> Evidence
     Dashboard --> Task[Downloadable improvement task]
+    Dashboard --> Job[Reviewed improvement job]
+    Worker --> Codex[Codex SDK in a Git worktree]
+    Codex --> Build[Commit and build changed WriterApp]
+    Build --> WriterApp
 ```
 
 `src/Getright.Dashboard` hosts interactive server-rendered pages and a small JSON
 API. `RunStore` serializes mutations and uses SQLite WAL with parameterized SQL.
-Schema version 2 retains run snapshots, feedback JSON and the private worker lease,
-and adds local application profiles. Startup migrates schema 1 transactionally,
-preserving legacy runs without target/identity fields. Newer schemas are rejected
-instead of being downgraded. Future schema changes require explicit migrations.
+Schema version 3 retains runs, feedback and application profiles, and adds
+improvement jobs, incremental events and private expiring job leases. Startup
+migrates schemas 1 and 2 transactionally, preserving legacy payloads. Newer
+schemas are rejected instead of being downgraded. Future changes require migrations.
 
 `config/catalog.json` is copied into the dashboard build and published output.
 Rebuild after editing it. Test definitions are snapped into queued runs, so later
@@ -43,13 +47,16 @@ endpoint and development identity. Runs freeze that profile, and the worker chec
 it again before creating data and after the workflow. Passing completions must
 match the frozen target/build/account and include the created document identity.
 The source receipt records if the source was dirty; a commit hash alone does not
-identify those uncommitted changes. Worktree build/launch orchestration is milestone 2.
+identify those uncommitted changes. The milestone 2 worker builds clean source in
+a new worktree, commits its change, assigns a job-specific assembly version and
+verifies the actual runtime before rerunning the original test. Build changes to
+tracked source fail attribution checks.
 
 ## Data and state
 
 ```text
 data/
-  getright.db             # runs, feedback and application profiles, schema version 2
+  getright.db             # runs, feedback, profiles, jobs and events, schema version 3
   keys/                   # local ASP.NET keys, protected with DPAPI on Windows
   evidence/<run-id>/
     open.png
@@ -58,6 +65,7 @@ data/
     reopen.png
     trace.zip
   writerapp/<instance-id>/ # isolated WriterApp database, config and build receipt
+  jobs/<job-id>/          # bounded logs, diff, summary and changed host data
 ```
 
 Automated state: `queued → running → passed | failed | interrupted`.
@@ -73,8 +81,8 @@ work. History displays the latest 12 runs per test; all runs remain in SQLite.
 Claims use a private lease that is never returned by ordinary run reads. Duplicate
 claims, mismatched leases, duplicate completions and incomplete passing results
 are rejected. Dashboard restart invalidates running leases. Claims sweep work
-older than ten minutes into interrupted. There is no heartbeat or automatic retry
-yet, so adapters must stay within the lease duration.
+older than ten minutes into interrupted. Standalone UAT runs have no heartbeat or
+automatic retry yet, so their adapters must stay within the lease duration.
 
 ## Trust boundary
 
@@ -92,19 +100,31 @@ authentication, authorization, CSRF/session design and authenticated worker leas
 
 Evidence and traces can contain application content and session data. Keep them
 in ignored local storage, use dedicated UAT accounts, and sanitize any exported
-material before sharing. GitHub Actions runs only the isolated demo and does not
-upload traces or screenshots from live target applications.
+material before sharing. GitHub Actions runs the isolated demo and synthetic job
+contracts; live Codex/WriterApp validation is opt-in and its evidence is not uploaded.
 
-## Planned Codex integration
+## Codex job execution
 
-The [official Codex SDK](https://learn.chatgpt.com/docs/codex-sdk) supports
-programmatic coding workflows. The [app server](https://learn.chatgpt.com/docs/app-server)
-is the alternative for richer embedded conversations and approvals. The starter
-exports prompts and does not install or invoke either integration.
+Feedback can create a revisioned draft; the explicit Implement action queues it.
+The worker uses the [official Codex SDK](https://learn.chatgpt.com/docs/codex-sdk)
+with the existing local sign-in, workspace-write permissions, disabled command
+network access and no automatic escalation. Task text is not a command template.
+Repository selection and the WriterApp build/launch adapter come from trusted
+local configuration and fixed worker source.
 
-Before adding an Implement action: persist an editable job draft, bind it to a
-configured repository, create a dedicated worktree at a recorded base commit,
-run Codex with explicit permissions, capture events and exit status, build and
-launch that worktree's application, verify runtime build identity and rerun the
-same test with new isolated data. Preserve the original run, feedback, job and
-rerun links. Never mark generated code or a rerun accepted automatically.
+The worker validates the original clean source revision, creates a short dedicated
+worktree outside the original checkout, streams Codex events, commits its source
+diff locally and runs bounded build/launch commands. A changed app gets a fresh
+database and is stopped after its regression test. Worktrees, branches, evidence
+and logs are retained for review. No merge, deployment or publish step exists.
+
+Rerun creation and its job link are saved atomically, using the original frozen
+test definition. The runtime version, resulting source commit and verified account
+must match the rerun target. Automated success moves the job to awaiting-review;
+it never accepts the application change on the user's behalf.
+
+Job leases last 45 seconds and are renewed every five seconds. Cancellation aborts
+owned operations; shutdown, restart and lost leases retain an interrupted job.
+Any owned in-flight regression run becomes interrupted and rejects stale completion.
+The normal UAT queue retains its separate ten-minute run lease. See
+[improvement jobs](improvement-jobs.md) for the lifecycle and validation scope.

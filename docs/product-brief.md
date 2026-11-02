@@ -18,9 +18,9 @@ automated verification and a user's judgment as independent results.
    rerun the original test and compare evidence.
 8. Make a new human acceptance decision for the new run.
 
-The current implementation supports steps 1–5 for the isolated demo and the first
-WriterApp persistence workflow. Steps 6–8 require milestone 2's job and application
-lifecycle work described in the four-milestone roadmap.
+The current implementation supports the demo and the first WriterApp persistence
+workflow, plus milestone 2's complete feedback/job/build/rerun cycle for that
+WriterApp workflow. Human acceptance is always a fresh explicit decision.
 
 ## First applications
 
@@ -47,7 +47,7 @@ needs explicit company data, roles, identity setup, steps and expected results.
 
 ## Later capabilities
 
-Editable job prompts, streamed Codex progress, worktree lifecycle management,
-build/launch logs, previous/new evidence comparison, more application adapters and
-eventually central hosting with authenticated workers. None is required to run
-the local demo foundation.
+More application adapters, wider user/role testing, review audit history, evidence
+retention and worktree cleanup. Central hosting with authenticated workers remains
+optional future work. Editable jobs, streamed progress, worktree builds, bounded
+logs and original/new evidence comparison are implemented in milestone 2.

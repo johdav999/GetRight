@@ -1,6 +1,7 @@
 @page "/runs/{Id}"
 @inject RunStore Store
 @inject UatCatalogue Catalogue
+@inject NavigationManager Navigation
 
 <PageTitle>Run review · Getright</PageTitle>
 <div class="topbar"><a href="/">Test control room</a><span>Run review</span></div>
@@ -10,6 +11,7 @@ else
 {
     <header class="page-header"><div><p class="eyebrow">@Catalogue.Value.Applications.First(a => a.Id == run.ApplicationId).Name</p><h1>@run.TestSnapshot.Title</h1><p class="muted">Run @run.Id · @run.CreatedAt.ToLocalTime().ToString("g")</p></div><button class="secondary" @onclick="Load">Refresh run</button></header>
     <div class="run-summary"><span>Automated result <span class="badge @run.Status">@Home.Label(run.Status)</span></span><span>User acceptance <span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></span></div>
+    @if (run.ImprovementJobId is { } jobId) { <p class="notice">This is a regression run from <a href="/jobs/@jobId">improvement job @jobId[..8]</a>. <a href="/runs/@run.ParentRunId">View the original run</a>.</p> }
     @if (run.Status is "queued" or "running")
     { <div class="notice">@(run.Status == "queued" ? "Waiting for the local worker. Start it from the repository with npm run start --prefix worker." : "The browser test is running. Refresh this page to see its result.")</div> }
     <dl class="metadata"><div><dt>Tested build</dt><dd>@(run.BuildVersion ?? "Not recorded yet")</dd></div><div><dt>Fixture</dt><dd>@run.FixtureId</dd></div><div><dt>Environment</dt><dd>@(run.BaseUrl ?? "Not recorded yet")</dd></div><div><dt>Trace</dt><dd>@if (run.Trace is { } trace) { <a href="/api/evidence/@trace">Download Playwright trace</a> } else { <span>No trace available</span> }</dd></div></dl>
@@ -37,8 +39,9 @@ else
         @if (error is not null) { <p class="error-text" role="alert">@error</p> }
         @if (notice is not null) { <p role="status">@notice</p> }
         @foreach (var feedback in feedbacks)
-        { <article class="feedback"><span class="mini-label">@feedback.StepId · @feedback.CreatedAt.ToLocalTime().ToString("g")</span><p>@feedback.Comment</p><strong>@feedback.RequestedOutcome</strong><a href="/api/runs/@run.Id/tasks/@feedback.Id">Download task prompt</a><details><summary>Preview task</summary><pre>@feedback.Prompt</pre></details></article> }
-        <div class="notice">Task drafts are ready for review. Automatic Codex implementation, worktree builds and linked reruns are planned next.</div>
+        { <article class="feedback"><span class="mini-label">@feedback.StepId · @feedback.CreatedAt.ToLocalTime().ToString("g")</span><p>@feedback.Comment</p><strong>@feedback.RequestedOutcome</strong><a href="/api/runs/@run.Id/tasks/@feedback.Id">Download task prompt</a><button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => Prepare(feedback)">Prepare Codex job</button><details><summary>Preview task</summary><pre>@feedback.Prompt</pre></details></article> }
+        @foreach (var job in linkedJobs) { <a class="history-row" href="/jobs/@job.Id"><strong>Improvement job @job.Id[..8]</strong><span class="badge @job.Status">@Home.Label(job.Status)</span></a> }
+        <div class="notice">Prepare a job to review and edit its task. Codex starts only when you select Implement improvement on the job page.</div>
     </section>
     </div>
 }
@@ -47,13 +50,14 @@ else
     [Parameter] public string Id { get; set; } = "";
     private UatRun? run;
     private List<Feedback> feedbacks = [];
+    private List<ImprovementJob> linkedJobs = [];
     private string stepId = "", comment = "", outcome = "";
     private string? error, notice;
     private bool InProgress => !RendererInfo.IsInteractive || run?.Status is "queued" or "running";
     protected override void OnParametersSet() { stepId = ""; Load(); }
     private void Load()
     {
-        try { run = Store.Get(Id); feedbacks = Store.FeedbackFor(Id); if (stepId == "") stepId = run.TestSnapshot.Steps[0].Id; error = null; }
+        try { run = Store.Get(Id); feedbacks = Store.FeedbackFor(Id); linkedJobs = Store.Jobs().Where(j => j.OriginalRunId == Id).ToList(); if (stepId == "") stepId = run.TestSnapshot.Steps[0].Id; error = null; }
         catch (ArgumentException exception) { run = null; error = exception.Message; }
     }
     private void Review(string acceptance)
@@ -64,6 +68,11 @@ else
     private void SaveFeedback()
     {
         try { Store.AddFeedback(Id, new FeedbackRequest(stepId, comment, outcome)); comment = ""; outcome = ""; Load(); notice = "Improvement task created. Review or download it below."; }
+        catch (ArgumentException exception) { error = exception.Message; }
+    }
+    private void Prepare(Feedback feedback)
+    {
+        try { var job = Store.CreateJob(Id, feedback.Id); Navigation.NavigateTo($"/jobs/{job.Id}"); }
         catch (ArgumentException exception) { error = exception.Message; }
     }
 }

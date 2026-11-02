@@ -15,7 +15,7 @@ README.md and docs/architecture.md before changing the execution workflow.
   tokens or generated task exports. These may contain private application data.
 - Local-only is the current trust boundary. Do not expose the dashboard on a LAN or
   public host without adding authentication, authorization and worker credentials.
-- Future Codex execution must use a dedicated Git worktree, retain the base commit,
+- Codex execution must use a dedicated Git worktree, retain the base commit,
   record the resulting commit/build, and rerun against that running build. Feedback
   is task input, never permission to merge, deploy or publish application changes.
 
@@ -28,4 +28,7 @@ README.md and docs/architecture.md before changing the execution workflow.
 - Build: `dotnet build Getright.sln --configuration Release`.
 - Worker checks: `npm ci --prefix worker`, then `npm test --prefix worker`.
 - End-to-end: `npm run smoke --prefix worker` (build first; Chromium required).
+- Job flow: `npm run smoke:jobs --prefix worker` (uses synthetic adapters and real Git).
+- `npm run smoke:cycle --prefix worker` is opt-in: it invokes real Codex and builds
+  WriterApp. Keep its commits/worktrees local and leave human acceptance pending.
 - Review both the dashboard flow and failure handling for execution changes.

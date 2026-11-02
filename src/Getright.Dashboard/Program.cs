@@ -7,8 +7,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls(builder.Configuration["urls"] ?? "http://127.0.0.1:5120");
 // Local source builds must serve framework/scoped assets outside Development too.
 builder.WebHost.UseStaticWebAssets();
-builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 256 * 1024);
+builder.Services.AddRazorComponents().AddInteractiveServerComponents()
+    .AddHubOptions(options => options.MaximumReceiveMessageSize = 128 * 1024);
 builder.Services.AddSingleton<UatCatalogue>();
 builder.Services.AddSingleton<RunStore>();
 builder.Services.AddSingleton<ApplicationSetup>();
@@ -53,6 +54,23 @@ app.MapPost("/api/worker/claim", (RunStore store) => store.Claim() is { } lease 
 app.MapPost("/api/runs/{id}/complete", (string id, CompletionRequest request, RunStore store) => store.Complete(id, request));
 app.MapPost("/api/runs/{id}/review", (string id, ReviewRequest request, RunStore store) => store.Review(id, request.Acceptance));
 app.MapGet("/api/runs/{id}/feedback", (string id, RunStore store) => store.FeedbackFor(id));
+app.MapGet("/api/jobs", (RunStore store) => store.Jobs());
+app.MapPost("/api/jobs", (CreateJobRequest request, RunStore store) => store.CreateJob(request.RunId, request.FeedbackId));
+app.MapGet("/api/jobs/{id}", (string id, RunStore store) => store.Job(id));
+app.MapPost("/api/jobs/{id}/draft", (string id, EditJobRequest request, RunStore store) => store.EditJob(id, request));
+app.MapPost("/api/jobs/{id}/start", (string id, StartJobRequest request, RunStore store) => store.StartJob(id, request.Revision));
+app.MapPost("/api/jobs/{id}/cancel", (string id, RunStore store) => store.CancelJob(id));
+app.MapPost("/api/worker/jobs/claim", (RunStore store) => store.ClaimJob() is { } claim ? Results.Ok(claim) : Results.NoContent());
+app.MapPost("/api/jobs/{id}/heartbeat", (string id, JobLeaseRequest request, RunStore store) => store.HeartbeatJob(id, request.Lease));
+app.MapPost("/api/jobs/{id}/report", (string id, JobReport request, RunStore store) => store.ReportJob(id, request));
+app.MapPost("/api/jobs/{id}/rerun", (string id, JobRerunRequest request, RunStore store) => store.CreateJobRerun(id, request));
+app.MapPost("/api/jobs/{id}/finish", (string id, JobFinish request, RunStore store) => store.FinishJob(id, request));
+app.MapGet("/api/jobs/{id}/events", (string id, long? after, RunStore store) => store.JobEvents(id, after ?? 0));
+app.MapGet("/api/jobs/{id}/artifacts/{file}", (string id, string file, RunStore store) =>
+{
+    var path = store.JobArtifactPath(id, file);
+    return path is not null && File.Exists(path) ? Results.File(path, file == "summary.json" ? "application/json" : "text/plain", file) : Results.NotFound();
+});
 app.MapPost("/api/runs/{id}/feedback", (string id, FeedbackRequest request, RunStore store) => store.AddFeedback(id, request));
 app.MapGet("/api/runs/{id}/tasks/{feedbackId}", (string id, string feedbackId, RunStore store) =>
 {

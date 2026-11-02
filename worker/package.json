@@ -12,9 +12,12 @@
     "test": "node --test tests/*.test.mjs",
     "smoke": "node tests/smoke.mjs",
     "smoke:writerapp": "node tests/writerapp-live.mjs",
+    "smoke:jobs": "node tests/jobs-smoke.mjs",
+    "smoke:cycle": "node tests/cycle-live.mjs",
     "browsers": "playwright install chromium"
   },
   "dependencies": {
+    "@openai/codex-sdk": "0.166.0",
     "@playwright/test": "1.64.1"
   }
 }
