@@ -14,10 +14,12 @@ else
     <header class="page-header"><div><p class="eyebrow">@Catalogue.Value.Applications.First(a => a.Id == run.ApplicationId).Name</p><h1>@run.TestSnapshot.Title</h1><p class="muted">Run @run.Id · @run.CreatedAt.ToLocalTime().ToString("g")</p></div><button class="secondary" @onclick="Load">Refresh run</button></header>
     <div class="run-summary"><span>Automated result <span class="badge @run.Status">@Home.Label(run.Status)</span></span><span>User acceptance <span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></span></div>
     @if (run.ImprovementJobId is { } jobId) { <p class="notice">This is a regression run from <a href="/jobs/@jobId">improvement job @jobId[..8]</a>. <a href="/runs/@run.ParentRunId">View the original run</a>.</p> }
+    @if (run.CaseImplementationJobId is { } caseJob) { <p class="notice">Validation run for <a href="/case-implementations/@caseJob">test implementation @caseJob[..8]</a>. Its automated result does not accept the application.</p> }
     @if (run.Status is "queued" or "running")
     { <div class="notice">@(run.Status == "queued" ? "Waiting for the local worker. Start it from the repository with npm run start --prefix worker." : "The browser test is running. Results refresh automatically.")</div> }
     <div class="review-actions">
-    @if (run.Status is "queued" or "running" && run.ImprovementJobId is null) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || run.CancelRequested)" @onclick="Cancel">Cancel run</button> }
+    <TestPageButton TestId="@run.TestId" Title="@run.TestSnapshot.Title" />
+    @if (run.Status is "queued" or "running" && run.ImprovementJobId is null && run.CaseImplementationJobId is null) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || run.CancelRequested)" @onclick="Cancel">Cancel run</button> }
     @if (run.Status is not ("queued" or "running")) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || queueing)" @onclick="Again">Run again</button> }
     <a href="/history">Browse and compare runs</a>
     @if(run.ParentRunId is {} parent) { <a href="/compare?before=@parent&after=@run.Id">Compare with original</a> }

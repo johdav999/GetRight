@@ -1,0 +1,140 @@
+@using Getright.Dashboard.Components.Pages
+@inject RunStore Store
+
+<section class="panel quick-review" aria-label="Quick run review">
+    <div class="panel-heading"><div><span class="eyebrow">HUMAN ACCEPTANCE</span><h2>Review latest run</h2></div></div>
+    <div class="quick-review-body">
+    @if (reviewRun is not { } displayed)
+    { <p class="muted">Run this test case to review its result and describe an improvement here.</p> }
+    else
+    {
+        <p class="quick-run-identity"><a href="/runs/@displayed.Id">Run @displayed.Id[..8]</a> · @displayed.CreatedAt.ToLocalTime().ToString("g")</p>
+        <p class="quick-run-build">Tested build: <strong>@(displayed.BuildVersion ?? "Not recorded yet")</strong></p>
+        <div class="quick-run-status"><span>Automated <span class="badge @displayed.Status">@Home.Label(displayed.Status)</span></span><span>Acceptance <span class="badge @displayed.Acceptance">@Home.Label(displayed.Acceptance)</span></span></div>
+        @if (LatestRun is { } latest && latest.Id != displayed.Id)
+        {
+            <div class="notice"><p>A newer run (@latest.Id[..8]) is available. Your review still belongs to run @displayed.Id[..8].</p>
+                @if (HasDraft) { <p>Switching clears the unsaved comment fields below.</p> }
+                <button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="UseLatest">Review latest run</button>
+            </div>
+        }
+        @if (displayed.Status is "queued" or "running") { <p class="muted">Review controls become available when this run finishes.</p> }
+        <div class="review-actions">
+            <button disabled="@Disabled" @onclick='() => Review(displayed.Id, "accepted")'>Accept this run</button>
+            <button class="secondary" disabled="@Disabled" @onclick='() => Review(displayed.Id, "improvements-requested")'>Request improvements</button>
+            <button class="text-button" disabled="@Disabled" @onclick='() => Review(displayed.Id, "pending")'>Reset to pending</button>
+        </div>
+        <p class="muted">Your decision and comments apply only to this run.</p>
+        <details class="quick-feedback-form" open>
+            <summary>Comment or describe an improvement</summary>
+            <label for="quick-step">Test step</label><select id="quick-step" @bind="stepId" disabled="@Disabled">@foreach (var step in displayed.TestSnapshot.Steps) { <option value="@step.Id">@step.Title</option> }</select>
+            <label for="quick-comment">What needs improving?</label><textarea id="quick-comment" @bind="comment" @bind:event="oninput" maxlength="8000" rows="3" disabled="@Disabled" placeholder="Describe what you saw and why it should change."></textarea>
+            <label for="quick-outcome">Requested outcome</label><textarea id="quick-outcome" @bind="outcome" @bind:event="oninput" maxlength="8000" rows="2" disabled="@Disabled" placeholder="Describe the behavior you want."></textarea>
+            <button disabled="@Disabled" @onclick="() => SaveFeedback(displayed.Id)">Create improvement task</button>
+        </details>
+        @if (savedFeedback is { } feedback)
+        {
+            <div class="quick-saved-feedback"><h3>Improvement prompt</h3><p class="mini-label">Run @displayed.Id[..8] · Step @feedback.StepId</p><p class="preserve-lines">@feedback.Comment</p>
+                <details><summary>Preview task prompt</summary><pre>@feedback.Prompt</pre></details>
+                <div class="review-actions"><a href="/api/runs/@displayed.Id/tasks/@feedback.Id">Download task prompt</a>
+                @if (job is null) { <button class="secondary" disabled="@Disabled" @onclick="() => Prepare(displayed.Id, feedback.Id)">Prepare Codex job</button> }</div>
+            </div>
+        }
+        @if (job is { } prepared)
+        {
+            <div class="quick-job"><h3>Improvement <span class="badge @prepared.Status">@Home.Label(prepared.Status)</span></h3><a href="/jobs/@prepared.Id">View job and progress</a>
+            @if (prepared.Status == "draft")
+            {
+                <details open><summary>Edit improvement task</summary><label for="quick-prompt">Task prompt</label><textarea id="quick-prompt" class="job-prompt" rows="6" maxlength="24000" @bind="prompt" @bind:event="oninput" disabled="@(!RendererInfo.IsInteractive)"></textarea></details>
+                @if (jobChanged) { <p class="error-text">This task changed in another view. Reload it before saving or implementing.</p><button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="ReloadJob">Reload task</button> }
+                @if (prepared.StartBlocker is { } blocker) { <p class="muted">@blocker</p> }
+                <div class="review-actions"><button class="secondary" disabled="@(!RendererInfo.IsInteractive || jobChanged)" @onclick="() => SaveJob(displayed.Id, prepared.Id)">Save task</button><button disabled="@(!RendererInfo.IsInteractive || jobChanged || prepared.StartBlocker is not null || PromptChanged)" @onclick="() => StartJob(displayed.Id, prepared.Id)">Implement improvement</button></div>
+                <p class="muted">Save task edits first. Implement improvement starts Codex in an isolated worktree and reruns this case.</p>
+            }
+            @if (prepared.Status is "draft" or "queued" || JobStates.Active(prepared.Status)) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || prepared.CancelRequested)" @onclick="() => CancelJob(displayed.Id, prepared.Id)">Cancel improvement</button> }
+            </div>
+        }
+    }
+    @if (error is not null) { <p class="error-text" role="alert">@error</p> }
+    @if (notice is not null) { <p role="status">@notice</p> }
+    </div>
+</section>
+
+@code {
+    [Parameter] public UatRun? LatestRun { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+    private UatRun? reviewRun;
+    private Feedback? savedFeedback;
+    private ImprovementJob? job;
+    private string stepId = "", comment = "", outcome = "", prompt = "";
+    private string? error, notice;
+    private bool jobChanged;
+    private bool HasDraft => !string.IsNullOrWhiteSpace(comment) || !string.IsNullOrWhiteSpace(outcome);
+    private bool Disabled => !RendererInfo.IsInteractive || reviewRun is null || reviewRun.Status is "queued" or "running";
+    private bool PromptChanged => job is not null && prompt.ReplaceLineEndings("\n") != job.Prompt;
+    protected override void OnParametersSet()
+    {
+        if (reviewRun is null && LatestRun is not null) { SetRun(LatestRun); return; }
+        if (reviewRun is null) return;
+        try { reviewRun = Store.Get(reviewRun.Id); LoadSaved(); }
+        catch (ArgumentException exception) { error = exception.Message; }
+    }
+    private void SetRun(UatRun run)
+    {
+        reviewRun = run; stepId = run.TestSnapshot.Steps[0].Id; comment = outcome = prompt = "";
+        savedFeedback = null; job = null; jobChanged = false; error = notice = null; LoadSaved();
+    }
+    private void UseLatest() { if (LatestRun is not null) SetRun(LatestRun); }
+    private void LoadSaved()
+    {
+        if (reviewRun is null) return;
+        savedFeedback ??= Store.FeedbackFor(reviewRun.Id).LastOrDefault();
+        if (savedFeedback is null) return;
+        var current = job is not null ? Store.Job(job.Id) : Store.JobsForRun(reviewRun.Id).FirstOrDefault(j => j.FeedbackId == savedFeedback.Id);
+        if (current is null) return;
+        if (job is null || current.Status != "draft") { job = current; prompt = current.Prompt; jobChanged = false; }
+        else jobChanged = current.Revision != job.Revision;
+    }
+    private void RequireRun(string id)
+    {
+        if (reviewRun?.Id != id) throw new ArgumentException("The displayed run changed. Review its identity before saving.");
+    }
+    private void RequireJob(string runId, string jobId)
+    {
+        RequireRun(runId);
+        if (job?.Id != jobId || job.OriginalRunId != runId || job.FeedbackId != savedFeedback?.Id) throw new ArgumentException("The improvement task no longer matches this run and feedback.");
+    }
+    private async Task Review(string id, string acceptance)
+    {
+        try { RequireRun(id); reviewRun = Store.Review(id, acceptance); error = null; notice = $"Review saved for run {id[..8]}."; await Changed.InvokeAsync(); }
+        catch (ArgumentException exception) { error = exception.Message; notice = null; }
+    }
+    private async Task SaveFeedback(string id)
+    {
+        try {
+            RequireRun(id); savedFeedback = Store.AddFeedback(id, new(stepId, comment, outcome)); comment = outcome = ""; job = null; prompt = ""; jobChanged = false;
+            error = null; notice = $"Improvement task created for run {id[..8]}. Preview it below."; await Changed.InvokeAsync();
+        } catch (ArgumentException exception) { error = exception.Message; notice = null; }
+    }
+    private void Prepare(string id, string feedbackId)
+    {
+        try { RequireRun(id); job = Store.CreateJob(id, feedbackId); prompt = job.Prompt; jobChanged = false; error = null; notice = "Improvement prepared. Codex starts only when you select Implement improvement."; }
+        catch (ArgumentException exception) { error = exception.Message; notice = null; }
+    }
+    private void ReloadJob() { if (job is null) return; job = Store.Job(job.Id); prompt = job.Prompt; jobChanged = false; }
+    private void SaveJob(string id, string jobId)
+    {
+        try { RequireJob(id, jobId); job = Store.EditJob(jobId, new(prompt, job!.Revision)); prompt = job.Prompt; jobChanged = false; error = null; notice = "Task saved."; }
+        catch (ArgumentException exception) { error = exception.Message; notice = null; }
+    }
+    private void StartJob(string id, string jobId)
+    {
+        try { RequireJob(id, jobId); if (PromptChanged) throw new ArgumentException("Save your task edits before implementing."); job = Store.StartJob(jobId, job!.Revision); error = null; notice = "Implementation queued for the local worker. The new run will await human acceptance."; }
+        catch (ArgumentException exception) { error = exception.Message; notice = null; }
+    }
+    private void CancelJob(string id, string jobId)
+    {
+        try { RequireJob(id, jobId); job = Store.CancelJob(jobId); error = null; notice = "Improvement cancellation requested."; }
+        catch (ArgumentException exception) { error = exception.Message; notice = null; }
+    }
+}

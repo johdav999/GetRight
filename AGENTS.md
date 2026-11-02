@@ -32,6 +32,16 @@ README.md and docs/architecture.md before changing the execution workflow.
 - `npm run smoke:cycle --prefix worker` is opt-in: it invokes real Codex and builds
   WriterApp. Keep its commits/worktrees local and leave human acceptance pending.
 - Review both the dashboard flow and failure handling for execution changes.
+- Browser review: `npm run smoke:review --prefix worker` checks visible-browser
+  retention after terminal completion, manual closing, shutdown and auto-close.
+- Suites and AI case proposals: `npm run smoke:suites --prefix worker` uses fake
+  OpenAI credentials and loopback contract fixtures; generated cases stay drafts.
+- Control room quick review: `npm run smoke:quick-review --prefix worker` checks
+  review/feedback provenance and explicit job preparation/queueing with synthetic
+  fixtures. It does not invoke Codex.
+- Windows launcher checks: `npm run smoke:startup --prefix worker` uses copied
+  build outputs and disposable databases to verify repeat startup, explicit
+  restart/stop, unrelated-port refusal and database ownership before recovery.
 
 - Virtual Company contracts: `npm run smoke:virtual-company --prefix worker`.
 - Real Virtual Company: `npm run smoke:virtual-company:live --prefix worker`; add
@@ -40,3 +50,15 @@ README.md and docs/architecture.md before changing the execution workflow.
 - Operational acceptance: `npm run smoke:operations --prefix worker`. Use only
   disposable test fixtures for removal checks. Preserve branches, source commits,
   run metadata and audit history during explicitly requested cleanup.
+
+- Draft implementation: `npm run smoke:case-implementation --prefix worker` uses
+  a synthetic compiler, real Git and isolated browser validation. The opt-in
+  `npm run smoke:case-implementation:live --prefix worker` invokes real Codex;
+  `-- --virtual-company` additionally builds the clean configured application and
+  uses fresh disconnected companies with a synthetic plan compiler. Retain local
+  commits/worktrees and leave human acceptance pending.
+  `npm run smoke:bulk-approval --prefix worker` checks filtered bulk approval,
+  duplicate prevention and setup failures on disposable cases without running Codex.
+  `npm run smoke:worker-launch --prefix worker` exercises the supervised worker's
+  actual empty/demo `--once` lifecycle without paid providers. Startup smoke also
+  checks explicit queued-case preservation and refusal to interrupt executing work.

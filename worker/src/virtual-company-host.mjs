@@ -5,7 +5,8 @@ import http from 'node:http';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { repositoryRoot, localUrl } from './settings.mjs';
-import { cleanEnvironment, runCommand, launchProcess, stopProcess } from './processes.mjs';
+import { cleanEnvironment, launchProcess, stopProcess } from './processes.mjs';
+import { dotnetBuild } from './dotnet-build.mjs';
 import { freePort } from './writerapp-host.mjs';
 
 export async function buildVirtualCompany({ worktree, jobRoot, version, signal, log }) {
@@ -18,7 +19,7 @@ export async function buildVirtualCompany({ worktree, jobRoot, version, signal, 
   // Migration-history projects are large. Keep compiler memory bounded on a
   // developer workstation that may also be running the apps and dashboard.
   for (const project of ['src/VirtualCompany.Web/VirtualCompany.Web.csproj', '.codex-build/getright-host/Host.csproj'])
-    await runCommand('dotnet', ['build', project, '--disable-build-servers', '-maxcpucount:1', `-p:AssemblyVersion=${version}`, `-p:Version=${version}`], { cwd: worktree, env, signal, log });
+    await dotnetBuild(['build', project, '--disable-build-servers', '-maxcpucount:1', `-p:AssemblyVersion=${version}`, `-p:Version=${version}`], { cwd: worktree, env, signal, log });
   const web = path.join(worktree, 'src/VirtualCompany.Web/bin/Debug/net9.0/VirtualCompany.Web.dll');
   const assembly = path.join(root, 'bin/Debug/net9.0/Getright.VirtualCompany.Host.dll');
   const digest = createHash('sha256').update(await readFile(web)).digest('hex');

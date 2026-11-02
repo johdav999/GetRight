@@ -6,9 +6,20 @@ evidence and missing task exports return 404. Request bodies are limited to 256 
 to support bounded Unicode prompts; interactive messages are limited to 128 KiB.
 No CORS policy is enabled.
 
+Schema 5 also provides [suite, generated-case proposal and manual entry-page
+contracts](test-suites.md#api). The catalogue includes persisted drafts; they stay
+disabled for automation until execution support is implemented.
+
+Schema 6 adds [explicit draft implementation and verification](test-implementation.md#api-and-recovery).
+Normal worker claims may send `{ "workflowEngineDigest": "<sha256>" }` to declare
+declarative workflow support. Bodyless/empty claims remain compatible with built-in
+adapters and cannot accidentally take a declarative run. Verified implementations
+are frozen in run snapshots, including plan/engine digests and source attribution.
+
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | `/api/health` | Getright name, running assembly version and local mode. |
+| GET | `/api/operations/active` | Total queued/running runs, jobs, cleanup tasks and caseImplementations, used by restart/stop checks. |
 | GET | `/api/catalog` | Applications and test definitions. |
 | GET | `/api/applications/{id}/profile` | Local profile or null; no credentials. |
 | POST | `/api/applications/{id}/profile` | Save application URL, expected build/account, company/role if applicable, and isolation confirmation. |
@@ -25,6 +36,10 @@ No CORS policy is enabled.
 | GET | `/api/evidence/{id}/{file}` | Serve a referenced screenshot or trace only. |
 
 ## Completion example
+
+Health also reports `instanceId`, `processId` and `dataPath` for local launcher
+ownership checks. It includes no credentials. Database ownership is acquired
+before RunStore recovery, independently of HTTP port ownership.
 
 ```json
 {

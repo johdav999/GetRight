@@ -45,7 +45,7 @@ let browser, proxy, baseline, changedHost;
 const sockets = new Set();
 const report = { scope: 'Milestone 4 local operational acceptance', flows: [], issues: [{ id: 'OPS-UAT-001', severity: 'P2', flow: 'History pagination', observed: 'Prerendered pagination buttons accepted clicks before Blazor hydration, leaving the page unchanged.', expected: 'Controls wait for interactivity and Next page displays the next result page.', evidence: 'history-desktop.png', status: 'open' }] };
 try {
-  const db = database(); assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4); db.close();
+  const db = database(); assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6); db.close();
   assert.equal((await api(origin, `/api/runs/${legacy.id}`)).acceptance, 'accepted');
   assert.equal((await api(origin, `/api/runs/${legacy.id}/reviews`)).length, 0);
   const cancelled = await queue(); await api(origin, `/api/runs/${cancelled.id}/cancel`, {});

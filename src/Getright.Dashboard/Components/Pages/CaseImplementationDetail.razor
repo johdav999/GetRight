@@ -1,0 +1,39 @@
+@page "/case-implementations/{Id}"
+@inject RunStore Store
+@implements IAsyncDisposable
+
+<PageTitle>Test case implementation · Getright</PageTitle>
+<div class="topbar"><a href="/">Test control room</a><span>Test implementation</span></div>
+@if (job is not { } current) { <h1>Implementation unavailable</h1><p role="alert">@error</p> }
+else
+{
+    <header class="page-header"><div><p class="eyebrow">@current.ApplicationId · TEST AUTOMATION</p><h1>@current.TestSnapshot.Title</h1><p class="muted">Implementation @current.Id · approved @current.CreatedAt.ToLocalTime().ToString("g")</p></div><span class="badge @current.Status">@Home.Label(current.Status)</span></header>
+    <p class="notice">This job implements a test case. It does not accept the application, merge changes or deploy anything. Validation runs retain their own pending human acceptance.</p>
+    <div class="workspace-grid">
+    <section class="panel"><div class="panel-heading"><h2>Approved case</h2></div><div class="suite-form"><p>@current.TestSnapshot.Purpose</p><h3>Preconditions</h3><p class="preserve-lines">@current.TestSnapshot.Preconditions</p><ol class="steps">@foreach (var step in current.TestSnapshot.Steps) { <li><strong>@step.Title</strong><p>@step.Expected</p><span class="mini-label">@step.Id</span></li> }</ol><h3>Human review</h3><p>@current.TestSnapshot.ReviewQuestion</p>
+        <dl class="metadata"><div><dt>Definition digest</dt><dd>@current.DefinitionDigest</dd></div><div><dt>Platform base</dt><dd>@current.PlatformBaseCommit</dd></div><div><dt>Result commit</dt><dd>@current.ResultCommit</dd></div><div><dt>Application source</dt><dd>@current.ApprovedTarget?.SourceCommit</dd></div><div><dt>Validation build</dt><dd>@current.ValidationTarget?.ExpectedBuildVersion</dd></div><div><dt>Engine digest</dt><dd>@current.EngineDigest</dd></div><div><dt>Codex thread</dt><dd>@current.ThreadId</dd></div><div><dt>Test worktree</dt><dd>@current.WorktreePath</dd></div><div><dt>Application worktree</dt><dd>@current.ApplicationWorktree</dd></div></dl>
+        @if (current.PlanJson is { } plan) { <h3>Committed workflow plan</h3><pre class="workflow-plan">@plan</pre> }
+        <div class="artifact-links">@foreach (var file in new[] { "codex.log", "build.log", "workflow.json", "summary.json" }) { <a href="/api/case-implementations/@current.Id/artifacts/@file">@file</a> }</div>
+    </div></section>
+    <section class="panel"><div class="panel-heading"><h2>Implementation progress</h2></div><div class="suite-form">
+        @if (current.Error is { } failure) { <p role="alert" class="error-text preserve-lines">@failure</p> }
+        @if (current.Status == "queued" || CaseImplementationStates.Active(current.Status)) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || current.CancelRequested)" @onclick="Cancel">Cancel implementation</button> }
+        @if (current.ValidationRunIds is { } validations) { <h3>Repeatability checks</h3>@foreach (var runId in validations) { var run = Store.Get(runId); <a class="history-row" href="/runs/@runId"><strong>@runId[..8]</strong><span class="badge @run.Status">@Home.Label(run.Status)</span><span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></a> } }
+        <ol class="job-events">@foreach (var item in events) { <li><span class="mini-label">@item.CreatedAt.ToLocalTime().ToString("T") · @item.Stage</span><p>@item.Message</p></li> }</ol>
+    </div></section></div>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+    private CaseImplementationJob? job;
+    private List<JobEvent> events = [];
+    private string? error;
+    private readonly CancellationTokenSource stop = new();
+    private Task? polling;
+    private string? eventJobId;
+    protected override void OnParametersSet() { Load(); polling ??= Poll(); }
+    private void Load() { try { job = Store.CaseJob(Id); if (eventJobId != Id) { events = []; eventJobId = Id; } events.AddRange(Store.CaseEvents(Id, events.LastOrDefault()?.Sequence ?? 0)); if (events.Count > 200) events.RemoveRange(0, events.Count - 200); error = null; } catch (ArgumentException exception) { error = exception.Message; } }
+    private void Cancel() { if (job is not null) job = Store.CancelCaseJob(Id); }
+    private async Task Poll() { using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2)); try { while (await timer.WaitForNextTickAsync(stop.Token)) await InvokeAsync(() => { Load(); StateHasChanged(); }); } catch (OperationCanceledException) { } }
+    public async ValueTask DisposeAsync() { await stop.CancelAsync(); if (polling is not null) await polling; stop.Dispose(); }
+}

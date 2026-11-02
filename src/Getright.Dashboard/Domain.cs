@@ -6,7 +6,8 @@ namespace Getright.Dashboard;
 public record UatApplication(string Id, string Name, string Description, string RepositoryHint);
 public record TestStep(string Id, string Title, string Expected);
 public record UatTest(string Id, string ApplicationId, string Title, string Purpose,
-    string Readiness, string? Adapter, string ReviewQuestion, List<TestStep> Steps);
+    string Readiness, string? Adapter, string ReviewQuestion, List<TestStep> Steps,
+    string? Preconditions = null, string? GenerationId = null, WorkflowImplementation? Implementation = null);
 public record Catalogue(List<UatApplication> Applications, List<UatTest> Tests);
 public record StepResult(string StepId, string Status, string? Screenshot, string? Error);
 public record UatRun(string Id, string TestId, string ApplicationId, string Status,
@@ -14,7 +15,8 @@ public record UatRun(string Id, string TestId, string ApplicationId, string Stat
     DateTimeOffset? CompletedAt, string FixtureId, string? BuildVersion,
     string? BaseUrl, List<StepResult> Steps, string? Trace, string? Error,
     UatTest TestSnapshot, ApplicationProfile? Target = null, ExecutionIdentity? Identity = null,
-    string? ImprovementJobId = null, string? ParentRunId = null, bool CancelRequested = false, DateTimeOffset? EvidenceRetiredAt = null);
+    string? ImprovementJobId = null, string? ParentRunId = null, bool CancelRequested = false, DateTimeOffset? EvidenceRetiredAt = null,
+    string? CaseImplementationJobId = null);
 public record ApplicationProfile(string ApplicationId, string BaseUrl, string ExpectedBuildVersion,
     string ExpectedUserId, bool IsolatedDataConfirmed, string? SourceCommit = null, bool SourceWasDirty = false,
     string? ExpectedCompanyId = null, string? ExpectedRole = null);

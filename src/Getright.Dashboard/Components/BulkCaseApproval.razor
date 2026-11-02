@@ -1,0 +1,76 @@
+@inject RunStore Store
+@inject ApplicationSetup Setup
+@implements IDisposable
+
+<section class="bulk-case-approval" aria-label="Bulk test case approval">
+    <div class="review-actions">
+        <button disabled="@(busy || pending.Count == 0 || !RendererInfo.IsInteractive)" @onclick="ApproveAll">Approve all pending test cases (@pending.Count)</button>
+        @if (busy) { <button class="secondary" disabled="@(batchStop?.IsCancellationRequested == true)" @onclick="Cancel">Cancel remaining approvals</button> }
+    </div>
+    <p class="muted">Approve draft cases in the current application and suite filters for Codex implementation. Each case still needs two passing validations; run acceptance stays separate.</p>
+    @if (activeCount > 0) { <p class="muted">@activeCount @(activeCount == 1 ? "case is" : "cases are") already queued or being implemented.</p> }
+    @if (summary is not null) { <p role="status">@summary</p> }
+    @if (results.Count > 0)
+    {
+        <details class="bulk-approval-results"><summary>Last batch: @results.Count @(results.Count == 1 ? "case" : "cases") processed</summary>
+            <ul>@foreach (var result in results) { <li><strong>@result.Title</strong>: @if (result.JobId is { } jobId) { <a href="/case-implementations/@jobId">Queued for implementation</a> } else { <span class="error-text">@result.Error</span> }</li> }</ul>
+        </details>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<UatTest> Tests { get; set; } = [];
+    [Parameter] public EventCallback Changed { get; set; }
+    private List<UatTest> pending = [];
+    private List<ApprovalResult> results = [];
+    private int activeCount;
+    private bool busy, disposed;
+    private string? summary;
+    private CancellationTokenSource? batchStop;
+    private record ApprovalResult(string Title, string? JobId, string? Error);
+    protected override void OnParametersSet() => LoadPending();
+    private void LoadPending()
+    {
+        pending = []; activeCount = 0;
+        foreach (var test in Tests.Where(t => t.Readiness == "draft"))
+        {
+            if (Store.CaseJobs(test.Id).Any(j => j.Status == "queued" || CaseImplementationStates.Active(j.Status))) activeCount++;
+            else pending.Add(test);
+        }
+    }
+    private async Task ApproveAll()
+    {
+        if (busy || pending.Count == 0) return;
+        // Freeze exactly the visible definitions approved by this click. Filter
+        // changes and polling cannot add cases or approve edited definitions.
+        var batch = pending.Select(t => (t.Id, t.Title, Digest: RunStore.DefinitionDigest(t))).ToList();
+        busy = true; results = []; batchStop = new(); var token = batchStop.Token;
+        try
+        {
+            foreach (var test in batch)
+            {
+                token.ThrowIfCancellationRequested();
+                summary = $"Approving {results.Count + 1} of {batch.Count} test cases…";
+                StateHasChanged();
+                await Task.Yield();
+                token.ThrowIfCancellationRequested();
+                try
+                {
+                    var job = await Setup.ApproveCase(test.Id, new(test.Digest), token);
+                    results.Add(new(test.Title, job.Id, null));
+                }
+                catch (ArgumentException error) { results.Add(new(test.Title, null, error.Message)); }
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        finally
+        {
+            var queued = results.Count(r => r.JobId is not null);
+            summary = $"{queued} queued for implementation; {results.Count - queued} could not be approved; {batch.Count - results.Count} left unprocessed.";
+            busy = false; batchStop.Dispose(); batchStop = null;
+            if (!disposed) { LoadPending(); await Changed.InvokeAsync(); }
+        }
+    }
+    private void Cancel() => batchStop?.Cancel();
+    public void Dispose() { disposed = true; batchStop?.Cancel(); }
+}

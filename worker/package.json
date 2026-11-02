@@ -7,8 +7,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node src/index.mjs",
-    "once": "node src/index.mjs --once",
+    "start": "node src/launch.mjs",
+    "once": "node src/launch.mjs --once",
     "test": "node --test tests/*.test.mjs",
     "smoke": "node tests/smoke.mjs",
     "smoke:writerapp": "node tests/writerapp-live.mjs",
@@ -17,7 +17,17 @@
     "browsers": "playwright install chromium",
     "smoke:virtual-company": "node tests/virtual-company-smoke.mjs",
     "smoke:virtual-company:live": "node tests/virtual-company-live.mjs",
-    "smoke:operations": "node tests/operations-smoke.mjs"
+    "smoke:operations": "node tests/operations-smoke.mjs",
+    "smoke:review": "node tests/browser-review-smoke.mjs",
+    "smoke:suites": "node tests/suites-smoke.mjs",
+    "smoke:quick-review": "node tests/quick-review-smoke.mjs",
+    "smoke:test-page-panel": "node tests/test-page-panel-smoke.mjs",
+    "smoke:startup": "node tests/startup-smoke.mjs",
+    "smoke:case-implementation": "node tests/case-implementation-smoke.mjs",
+    "smoke:bulk-approval": "node tests/bulk-case-approval-smoke.mjs",
+    "smoke:generation-progress": "node tests/generation-progress-smoke.mjs",
+    "smoke:worker-launch": "node tests/worker-launch-smoke.mjs",
+    "smoke:case-implementation:live": "node tests/case-implementation-live.mjs"
   },
   "dependencies": {
     "@openai/codex-sdk": "0.166.0",

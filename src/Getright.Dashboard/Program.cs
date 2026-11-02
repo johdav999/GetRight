@@ -11,14 +11,17 @@ builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 
 builder.Services.AddRazorComponents().AddInteractiveServerComponents()
     .AddHubOptions(options => options.MaximumReceiveMessageSize = 128 * 1024);
 builder.Services.AddSingleton<UatCatalogue>();
+builder.Services.AddSingleton<DashboardInstance>();
 builder.Services.AddSingleton<RunStore>();
 builder.Services.AddSingleton<ApplicationSetup>();
+builder.Services.AddSingleton<CaseGeneration>();
 builder.Services.AddHostedService<LeaseMonitor>();
 var protection = builder.Services.AddDataProtection()
     .SetApplicationName("Getright")
     .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(RunStore.ResolveDataPath(builder.Configuration), "keys")));
 if (OperatingSystem.IsWindows()) protection.ProtectKeysWithDpapi();
 var app = builder.Build();
+_ = app.Services.GetRequiredService<DashboardInstance>();
 _ = app.Services.GetRequiredService<RunStore>();
 if (!app.Environment.IsDevelopment()) app.UseExceptionHandler("/Error", createScopeForErrors: true);
 
@@ -39,8 +42,18 @@ app.Use(async (context, next) =>
     { await Results.BadRequest(new { error = exception.Message }).ExecuteAsync(context); }
 });
 app.UseAntiforgery();
-app.MapGet("/api/health", () => new { name = "Getright", version = AppJson.BuildVersion, mode = "local" });
-app.MapGet("/api/catalog", (UatCatalogue catalogue) => catalogue.Value);
+app.MapGet("/api/health", (DashboardInstance instance) => new { name = "Getright", version = AppJson.BuildVersion, mode = "local", instanceId = instance.Id, processId = Environment.ProcessId, dataPath = instance.DataPath });
+app.MapGet("/api/operations/active", (RunStore store) => store.ActiveWork());
+app.MapGet("/api/catalog", (UatCatalogue catalogue, RunStore store) => new Catalogue(catalogue.Value.Applications, store.Tests()));
+app.MapGet("/tests/{id}/open", TestPage.Open);
+app.MapGet("/api/suites", (RunStore store) => store.Suites());
+app.MapGet("/api/suites/{id}", (string id, RunStore store) => store.Suite(id));
+app.MapPost("/api/suites", (CreateSuiteRequest request, RunStore store) => store.CreateSuite(request));
+app.MapPost("/api/suites/{id}", (string id, EditSuiteRequest request, RunStore store) => store.EditSuite(id, request));
+app.MapGet("/api/generation/status", (CaseGeneration generation) => generation.Status());
+app.MapPost("/api/suites/{id}/generate", (string id, GenerateCasesRequest request, CaseGeneration generation, CancellationToken cancellationToken) => generation.Generate(id, request, cancellationToken));
+app.MapGet("/api/suites/{id}/proposals", (string id, RunStore store) => store.Proposals(id));
+app.MapPost("/api/suites/{id}/proposals/{proposalId}/apply", (string id, string proposalId, ApplyCasesRequest request, RunStore store) => store.ApplyProposal(id, proposalId, request));
 app.MapGet("/api/runs", (RunStore store) => store.List());
 app.MapGet("/api/runs/{id}", (string id, RunStore store) => store.Get(id));
 app.MapPost("/api/runs", async (QueueRequest request, ApplicationSetup setup, CancellationToken cancellationToken) => Results.Created("/api/runs", await setup.Queue(request.TestId, cancellationToken)));
@@ -51,7 +64,25 @@ app.MapPost("/api/applications/{id}/profile", (string id, ApplicationProfile pro
     return store.SaveProfile(profile);
 });
 app.MapGet("/api/applications/{id}/readiness", (string id, ApplicationSetup setup, CancellationToken cancellationToken) => setup.Check(id, cancellationToken));
-app.MapPost("/api/worker/claim", (RunStore store) => store.Claim() is { } lease ? Results.Ok(lease) : Results.NoContent());
+app.MapPost("/api/worker/claim", (WorkerClaimRequest? request, RunStore store) => store.Claim(request?.WorkflowEngineDigest) is { } lease ? Results.Ok(lease) : Results.NoContent());
+app.MapGet("/api/case-implementations", (string? test, RunStore store) => store.CaseJobs(test));
+app.MapGet("/api/case-implementations/{id}", (string id, RunStore store) => store.CaseJob(id));
+app.MapPost("/api/tests/{id}/approve-implementation", (string id, ApproveCaseRequest request, ApplicationSetup setup, CancellationToken cancellationToken) => setup.ApproveCase(id, request, cancellationToken));
+app.MapPost("/api/tests/{id}/disable-implementation", (string id, RunStore store) => store.DisableCase(id));
+app.MapPost("/api/worker/case-implementations/claim", (RunStore store) => store.ClaimCaseJob() is { } lease ? Results.Ok(lease) : Results.NoContent());
+app.MapPost("/api/case-implementations/{id}/heartbeat", (string id, JobLeaseRequest request, RunStore store) => store.HeartbeatCaseJob(id, request.Lease));
+app.MapPost("/api/case-implementations/{id}/report", (string id, CaseImplementationReport request, RunStore store) => store.ReportCaseJob(id, request));
+app.MapPost("/api/case-implementations/{id}/validate", (string id, CaseValidationRequest request, RunStore store) => store.CreateCaseValidation(id, request));
+app.MapPost("/api/case-implementations/{id}/finish", (string id, CaseImplementationFinish request, RunStore store) => store.FinishCaseJob(id, request));
+app.MapPost("/api/case-implementations/{id}/cancel", (string id, RunStore store) => store.CancelCaseJob(id));
+app.MapGet("/api/case-implementations/{id}/events", (string id, long? after, RunStore store) => store.CaseEvents(id, after ?? 0));
+app.MapGet("/api/case-implementations/{id}/artifacts/{file}", (string id, string file, RunStore store) =>
+{
+    _ = store.CaseJob(id);
+    if (file is not ("codex.log" or "build.log" or "summary.json" or "workflow.json")) return Results.NotFound();
+    var artifact = Path.Combine(store.DataPath, "case-implementations", id, file);
+    return File.Exists(artifact) ? Results.File(artifact, file.EndsWith(".json") ? "application/json" : "text/plain", file) : Results.NotFound();
+});
 app.MapGet("/api/history", (int? page, int? pageSize, string? test, string? application, string? status, string? acceptance, long? snapshot, RunStore store) => store.History(page ?? 1, pageSize ?? 20, test, application, status, acceptance, snapshot));
 app.MapGet("/api/job-history", (int? page, int? pageSize, string? application, string? status, long? snapshot, RunStore store) => store.JobHistory(page ?? 1, pageSize ?? 20, application, status, snapshot));
 app.MapPost("/api/runs/{id}/heartbeat", (string id, JobLeaseRequest request, RunStore store) => store.HeartbeatRun(id, request.Lease));

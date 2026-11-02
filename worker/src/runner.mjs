@@ -5,6 +5,8 @@ import { api } from './settings.mjs';
 import { writerAppAdapter } from './writerapp.mjs';
 import { supervise } from './supervision.mjs';
 import { virtualCompanyAdapter } from './virtual-company.mjs';
+import { waitForBrowserReview } from './browser-review.mjs';
+import { workflowAdapter } from './workflow.mjs';
 
 // Adapter IDs are allowlisted in source. The API cannot submit executable code,
 // shell commands or arbitrary navigation targets to this local worker.
@@ -22,7 +24,8 @@ async function performRun(claim, configuration) {
     const demo = run.testSnapshot.adapter === 'getright-save-note' && run.applicationId === 'getright';
     const writer = run.testSnapshot.adapter === 'writerapp-create-save' && run.applicationId === 'writerapp';
     const company = run.testSnapshot.adapter === 'virtual-company-test-setup' && run.applicationId === 'virtual-company';
-    if (!demo && !writer && !company) throw new Error('No registered adapter for this test.');
+    const implemented = run.testSnapshot.adapter === 'declarative-v1';
+    if (!demo && !writer && !company && !implemented) throw new Error('No registered adapter for this test.');
     if (demo) {
       const health = await api(configuration.dashboardUrl, '/api/health');
       if (health.name !== 'Getright' || !health.version) throw new Error('The running application did not identify its build.');
@@ -58,14 +61,15 @@ async function performRun(claim, configuration) {
         await expect(page.getByLabel('Note', { exact: true })).toHaveValue(body);
       },
     };
-    if (writer || company) {
-      adapter = (company ? virtualCompanyAdapter : writerAppAdapter)(page, context, run);
+    if (writer || company || implemented) {
+      adapter = implemented ? workflowAdapter(page, context, run, configuration) : (company ? virtualCompanyAdapter : writerAppAdapter)(page, context, run);
       result.baseUrl = adapter.origin;
       result.buildVersion = await adapter.verify();
       result.identity = adapter.identity;
       actions = adapter.actions;
       // Target UAT cannot navigate to an external sign-in/provider by accident.
       await context.route('**/*', route => new URL(route.request().url()).origin === adapter.origin ? route.continue() : route.abort('blockedbyclient'));
+      await adapter.prepare?.();
     }
     for (const step of run.testSnapshot.steps) {
       configuration.signal?.throwIfAborted();
@@ -78,7 +82,7 @@ async function performRun(claim, configuration) {
       result.steps.push({ stepId: step.id, status: 'passed', screenshot, error: null });
       currentStep = null;
     }
-    const finalVersion = (writer || company) ? await adapter.verify() : (await api(configuration.dashboardUrl, '/api/health')).version;
+    const finalVersion = adapter ? await (adapter.finish ? adapter.finish() : adapter.verify()) : (await api(configuration.dashboardUrl, '/api/health')).version;
     if (finalVersion !== result.buildVersion) throw new Error('The application build changed during this run.');
     result.status = 'passed';
   } catch (error) {
@@ -96,29 +100,43 @@ async function performRun(claim, configuration) {
       try { await context.tracing.stop({ path: path.join(directory, 'trace.zip') }); result.trace = `${run.id}/trace.zip`; }
       catch (error) { result.status = 'failed'; result.error ??= `Trace capture failed: ${error.message}`; }
     }
-    await browser?.close().catch(() => {});
+    // Stop recording before manual review. The browser is transferred to
+    // executeRun only for a visible, non-interrupted interactive run.
+    if (configuration.headless || configuration.keepBrowserOpen === false || configuration.signal?.aborted || !context?.pages().length) {
+      await browser?.close().catch(() => {});
+      browser = null;
+    }
     configuration.signal?.removeEventListener('abort', abortBrowser);
   }
-  return result;
+  return { result, browser };
 }
 
 export async function executeRun(claim, configuration) {
   const route = `/api/runs/${claim.run.id}`;
-  let result;
+  let result, browser;
   const supervision = supervise({ configuration, heartbeat: `${route}/heartbeat`, lease: claim.lease,
     timeoutMs: configuration.runTimeoutMs ?? 180000, cancellation: true });
   try {
     await supervision.ready;
-    result = await performRun(claim, { ...configuration, signal: supervision.signal });
+    ({ result, browser } = await performRun(claim, { ...configuration, signal: supervision.signal }));
   } catch (error) { result = { lease: claim.lease, status: 'failed', steps: [], error: error.message }; }
   finally { await supervision.stop(); }
   if (supervision.signal.aborted) {
     result.status = supervision.cancelled ? 'cancelled' : supervision.timedOut ? 'failed' : 'interrupted';
     result.error = String(supervision.signal.reason?.message || 'The run was interrupted.');
   }
-  try { return await api(configuration.dashboardUrl, `${route}/complete`, result); }
-  catch (error) {
-    try { const stored = await api(configuration.dashboardUrl, route); if (!['queued', 'running'].includes(stored.status)) return stored; } catch { }
-    throw new Error(`Could not acknowledge run completion; its lease will recover as interrupted. ${error.message}`);
-  }
+  try {
+    let completed;
+    try { completed = await api(configuration.dashboardUrl, `${route}/complete`, result); }
+    catch (error) {
+      try { const stored = await api(configuration.dashboardUrl, route); if (!['queued', 'running'].includes(stored.status)) return stored; } catch { }
+      throw new Error(`Could not acknowledge run completion; its lease will recover as interrupted. ${error.message}`);
+    }
+    if (browser && !supervision.signal.aborted && !configuration.signal?.aborted && ['passed', 'failed'].includes(completed.status)) {
+      console.log(`Result: ${completed.status}. Human acceptance: ${completed.acceptance}.\nBrowser open for review: ${configuration.dashboardUrl}${route.replace('/api', '')}\nClose the test browser window to continue the worker queue. Manual changes are outside the recorded run.`);
+      await waitForBrowserReview(browser, { signal: configuration.signal,
+        onReady: () => configuration.onReviewReady?.({ browser, run: completed }) });
+    }
+    return completed;
+  } finally { await browser?.close().catch(() => {}); }
 }

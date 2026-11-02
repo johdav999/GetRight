@@ -17,7 +17,7 @@ public record CleanupBatch(List<CleanupCandidate> Items, int Page, bool HasMore)
 
 public sealed partial class RunStore
 {
-    public void Sweep() { lock (gate) { ExpireRuns(); ExpireJobs(); ExpireCleanups(); } }
+    public void Sweep() { lock (gate) { ExpireCaseJobs(); ExpireRuns(); ExpireJobs(); ExpireCleanups(); } }
     private void ExpireRuns()
     {
         var now = DateTimeOffset.UtcNow.ToString("O");
@@ -27,7 +27,7 @@ public sealed partial class RunStore
     }
     private UatRun RequireRunLease(string id, string lease)
     {
-        ExpireJobs(); var run = Get(id);
+        ExpireCaseJobs(); ExpireJobs(); var run = Get(id);
         if (run.Status != "running" || string.IsNullOrWhiteSpace(lease) || Lease(id) != lease)
             throw new ArgumentException("The worker lease is no longer valid.");
         return run;
@@ -42,6 +42,7 @@ public sealed partial class RunStore
         {
             var run = Get(id);
             if (run.ImprovementJobId is not null) throw new ArgumentException("Cancel the owning improvement job to stop this regression run.");
+            if (run.CaseImplementationJobId is not null) throw new ArgumentException("Cancel the owning test implementation job to stop its validation run.");
             if (run.Status == "queued") { run = run with { Status = "cancelled", CancelRequested = true, CompletedAt = DateTimeOffset.UtcNow, Error = "Cancelled before execution." }; Save(run); }
             else if (run.Status == "running")
             {

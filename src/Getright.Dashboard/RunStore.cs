@@ -34,7 +34,7 @@ public sealed partial class RunStore
         command.ExecuteNonQuery();
         command.CommandText = "PRAGMA user_version";
         var schemaVersion = Convert.ToInt32(command.ExecuteScalar());
-        if (schemaVersion > 4) throw new InvalidOperationException("This database requires a newer Getright version.");
+        if (schemaVersion > 6) throw new InvalidOperationException("This database requires a newer Getright version.");
         using (var transaction = db.BeginTransaction())
         {
             command.Transaction = transaction;
@@ -76,6 +76,30 @@ public sealed partial class RunStore
                     """;
                 command.ExecuteNonQuery();
             }
+            if (schemaVersion < 5)
+            {
+                command.CommandText = """
+                    CREATE TABLE test_suites(id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+                    CREATE TABLE draft_test_cases(id TEXT PRIMARY KEY, suite_id TEXT NOT NULL REFERENCES test_suites(id), payload TEXT NOT NULL);
+                    CREATE TABLE case_proposals(id TEXT PRIMARY KEY, suite_id TEXT NOT NULL REFERENCES test_suites(id), payload TEXT NOT NULL);
+                    CREATE INDEX case_proposals_suite ON case_proposals(suite_id);
+                    PRAGMA user_version=5;
+                    """;
+                command.ExecuteNonQuery();
+                SeedSuites(db, transaction);
+            }
+            if (schemaVersion < 6)
+            {
+                command.CommandText = """
+                    CREATE TABLE case_implementation_jobs(id TEXT PRIMARY KEY,test_id TEXT NOT NULL,payload TEXT NOT NULL,lease TEXT,lease_expires TEXT);
+                    CREATE TABLE case_implementation_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT NOT NULL REFERENCES case_implementation_jobs(id),created_at TEXT NOT NULL,stage TEXT NOT NULL,message TEXT NOT NULL);
+                    CREATE INDEX case_implementation_test ON case_implementation_jobs(test_id);
+                    CREATE INDEX case_implementation_status ON case_implementation_jobs(json_extract(payload,'$.status'));
+                    CREATE TABLE case_bindings(test_id TEXT PRIMARY KEY,job_id TEXT NOT NULL REFERENCES case_implementation_jobs(id),payload TEXT NOT NULL);
+                    PRAGMA user_version=6;
+                    """;
+                command.ExecuteNonQuery();
+            }
             transaction.Commit();
         }
         // A restarted dashboard cannot vouch for workers from the old process.
@@ -85,6 +109,7 @@ public sealed partial class RunStore
         RecoverCleanups();
         foreach (var job in ReadJobs("WHERE json_extract(payload,'$.status') IN ('preparing','implementing','building','launching','rerunning')"))
             EndJob(job, "interrupted", "Dashboard restarted. The worktree is retained; create a new job to retry.");
+        RecoverCaseJobs();
     }
 
     private SqliteConnection Open() { var db = new SqliteConnection(connectionString); db.Open(); return db; }
@@ -118,24 +143,28 @@ public sealed partial class RunStore
     {
         lock (gate)
         {
-            var test = catalogue.Get(testId);
-            var demo = test.ApplicationId == "getright" && test.Adapter == "getright-save-note" && test.Readiness == "ready";
+            var test = Test(testId);
+            var demo = test.ApplicationId == "getright" && test.Adapter is "getright-save-note" or WorkflowContract.Adapter && test.Readiness == "ready";
             var targeted = ApplicationSetup.Supported(test.ApplicationId, test.Adapter) && target?.ApplicationId == test.ApplicationId;
             if (!demo && !targeted)
                 throw new ArgumentException("This test needs an application adapter before it can run.");
             if (targeted) ApplicationSetup.Validate(target!);
+            ApplicationSetup.ValidateWorkflowTarget(test, target);
             var id = Guid.NewGuid().ToString("N");
             var run = new UatRun(id, test.Id, test.ApplicationId, "queued", "pending",
                 DateTimeOffset.UtcNow, null, null, $"uat-{id}", null, null, [], null, null, test, targeted ? target : null);
             Save(run); return run;
         }
     }
-    public RunLease? Claim()
+    public RunLease? Claim(string? workflowEngineDigest = null)
     {
         lock (gate)
         {
             Sweep();
-            var run = ReadRuns("WHERE json_extract(payload,'$.status') = 'queued' ORDER BY rowid LIMIT 1").FirstOrDefault();
+            using var db = Open(); using var cmd = db.CreateCommand();
+            cmd.CommandText = "SELECT payload FROM runs WHERE json_extract(payload,'$.status')='queued' AND (COALESCE(json_extract(payload,'$.testSnapshot.adapter'),'') != 'declarative-v1' OR $engine IS NOT NULL) ORDER BY rowid LIMIT 1";
+            cmd.Parameters.AddWithValue("$engine", WorkflowContract.Digest(workflowEngineDigest) ? workflowEngineDigest : DBNull.Value);
+            var run = cmd.ExecuteScalar() is string payload ? JsonSerializer.Deserialize<UatRun>(payload, AppJson.Options) : null;
             if (run is null) return null;
             run = run with { Status = "running", StartedAt = DateTimeOffset.UtcNow };
             var lease = Guid.NewGuid().ToString("N"); Save(run, lease, DateTimeOffset.UtcNow.AddSeconds(45));

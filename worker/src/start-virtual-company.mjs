@@ -6,6 +6,7 @@ import { jobConfiguration } from './jobs.mjs';
 import { runCommand, cleanEnvironment, boundedLog } from './processes.mjs';
 import { buildVersion } from './writerapp-host.mjs';
 import { buildVirtualCompany, launchVirtualCompany } from './virtual-company-host.mjs';
+import { requireBuildSpace } from './storage.mjs';
 
 const controller = new AbortController();
 for (const event of ['SIGINT', 'SIGTERM']) process.once(event, () => controller.abort(new Error('Local UAT instance stopped.')));
@@ -29,6 +30,7 @@ const tree = path.join(worktreeRoot, `vc-${id.slice(0, 8)}`);
 if (process.platform === 'win32' && tree.length > 110) throw new Error('Choose a shorter worktreeRoot in local worker configuration.');
 let host;
 try {
+  await requireBuildSpace([worktreeRoot, root], 'virtual-company');
   console.log(`Preparing clean Virtual Company source at ${base}. Logs: ${root}`);
   await git(options.repositoryPath, ['worktree', 'add', '--no-checkout', '--detach', tree, base]);
   await git(tree, ['sparse-checkout', 'set', '--no-cone', '/*', '!/*/', '/src/', '/tests/', '/docs/', '/.design-addin/', '/.agents/', '!/src/VirtualCompany.Api/App_Data/']);
@@ -42,4 +44,7 @@ try {
   }
   console.log(`Virtual Company: ${host.target.baseUrl}\nLaunch receipt: ${path.join(root, 'host/build-receipt.json')}\nCtrl+C stops only this instance. Its database is discarded; source and evidence are retained.`);
   await new Promise(resolve => { if (controller.signal.aborted) resolve(); else controller.signal.addEventListener('abort', resolve, { once: true }); });
+} catch (error) {
+  console.error(`Virtual Company UAT startup failed: ${error.message}\nFull local logs: ${root}`);
+  process.exitCode = 1;
 } finally { await host?.stop(); }

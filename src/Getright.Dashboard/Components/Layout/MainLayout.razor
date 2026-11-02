@@ -1,11 +1,42 @@
 ﻿@inherits LayoutComponentBase
 
-<div class="shell">
+@inject ApplicationSetup Setup
+
+<CascadingValue Value="this" IsFixed="true">
+<div class="review-workspace @(panelOpen ? "test-page-docked" : "")">
+    @if (panelOpen)
+    {
+        <aside class="test-page-panel" aria-label="Tested application">
+            <div class="test-page-toolbar">
+                <div><span class="eyebrow">TESTED APPLICATION</span><strong>@panelTitle</strong></div>
+                @if (panelUrl is not null)
+                {
+                    <a class="button-link secondary" href="@panelUrl" target="_blank" rel="noopener noreferrer" @onclick="CloseTestPage" title="Open the test entry page in a standalone tab">Undock <span aria-hidden="true">↗</span></a>
+                }
+                <button class="secondary" @onclick="CloseTestPage" aria-label="Close tested application panel">Close</button>
+            </div>
+            @if (panelError is not null)
+            {
+                <div class="notice error" role="alert"><strong>Test page unavailable</strong><p>@panelError</p><a href="/applications">Application setup</a></div>
+            }
+            else if (panelUrl is null)
+            {
+                <p class="test-page-note" role="status">Checking the running build and UAT identity…</p>
+            }
+            else
+            {
+                <p class="test-page-note">Manual review · If the app blocks embedding, use Undock. Undocking opens the entry page; save changes first.</p>
+                <iframe @key="panelUrl" src="@panelUrl" title="@($"Tested application: {panelTitle}")" referrerpolicy="no-referrer"></iframe>
+            }
+        </aside>
+    }
+    <div class="shell">
     <aside class="sidebar">
         <a class="brand" href="/" aria-label="Getright home"><span class="brand-icon">g.</span> Getright</a>
         <p class="sidebar-caption">UAT WORKSPACE</p>
         <NavLink class="nav-link" ActiveClass="nav-current" href="/" Match="NavLinkMatch.All"><span aria-hidden="true">▦</span> Test control room</NavLink>
         <NavLink class="nav-link" ActiveClass="nav-current" href="/history">Run history</NavLink>
+        <NavLink class="nav-link" ActiveClass="nav-current" href="/suites">Test suites</NavLink>
         <NavLink class="nav-link" ActiveClass="nav-current" href="/maintenance">Local storage</NavLink>
         <NavLink class="nav-link" ActiveClass="nav-current" href="/jobs">Improvement jobs</NavLink>
         <NavLink class="nav-link" ActiveClass="nav-current" href="/applications">Application setup</NavLink>
@@ -13,9 +44,34 @@
     </aside>
     <main>@Body</main>
 </div>
+</div>
+</CascadingValue>
 
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.
     <a href="." class="reload">Reload</a>
     <span class="dismiss">🗙</span>
 </div>
+
+@code {
+    private bool panelOpen;
+    private string panelTitle = "";
+    private string? panelUrl, panelError;
+    private int panelRequest;
+
+    public async Task OpenTestPage(string id, string title)
+    {
+        var request = ++panelRequest;
+        panelOpen = true; panelTitle = title; panelUrl = null; panelError = null;
+        StateHasChanged();
+        try
+        {
+            var url = await Setup.TestPage(id);
+            if (request == panelRequest) panelUrl = url;
+        }
+        catch (ArgumentException error) { if (request == panelRequest) panelError = error.Message; }
+        if (request == panelRequest) StateHasChanged();
+    }
+
+    private void CloseTestPage() { panelRequest++; panelOpen = false; panelUrl = null; panelError = null; }
+}

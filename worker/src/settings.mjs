@@ -19,6 +19,7 @@ export function settings(env = process.env) {
     dashboardUrl: localUrl(env.GETRIGHT_DASHBOARD_URL || 'http://127.0.0.1:5120'),
     dataPath: path.resolve(env.GETRIGHT_DATA_PATH || path.join(repositoryRoot, 'data')),
     headless: env.GETRIGHT_HEADLESS === 'true',
+    keepBrowserOpen: env.GETRIGHT_KEEP_BROWSER_OPEN !== 'false',
   };
 }
 

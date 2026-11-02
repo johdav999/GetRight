@@ -23,6 +23,8 @@ It includes:
 - WriterApp application setup, runtime build/account checks, and a create/save/reopen
   adapter against an actual isolated WriterApp instance.
 - Four remaining draft WriterApp tests; Virtual Company creation and draft-permission UAT.
+- Explicit draft-case approval, Codex-generated bounded workflows, two isolated
+  validation runs and verified automation bindings.
 - Editable Codex jobs, isolated worktrees/commits, streamed progress, bounded build
   and launch logs, runtime version checks, linked reruns and before/after evidence.
 - Run/job cancellation, heartbeat leases, bounded execution and restart recovery.
@@ -31,8 +33,15 @@ It includes:
 
 **Not implemented yet:** the remaining WriterApp adapters and external/multi-user login.
 Cleanup is explicitly selected and confirmed; automatic scheduled purges are not
-enabled. See the [four-milestone roadmap](docs/roadmap.md).
-Draft tests are disabled. Codex starts only after the explicit Implement action.
+enabled. See the [implementation roadmap](docs/roadmap.md).
+Draft tests stay disabled until their automation is implemented and verified.
+Codex starts only after an explicit implementation action.
+
+Milestones 5–10 plan configuration-driven application integrations: versioned
+manifests, declarative workflows, trusted build recipes and dashboard setup,
+followed by migration and a third-application proof. The draft implementation flow
+already supports bounded browser workflows for the three existing fixture adapters;
+general application manifests and configurable host recipes remain planned.
 
 ## Requirements
 
@@ -52,16 +61,125 @@ npm run browsers --prefix worker
 .\scripts\start-dashboard.ps1
 ```
 
+Starting again reuses the healthy dashboard and prints its URL. To rebuild/reload
+an idle instance, use `./scripts/start-dashboard.ps1 -Restart`. Use `-Background`
+to run without keeping a terminal open, then `./scripts/stop-dashboard.ps1` to stop
+it. Restart/stop refuse queued or running work and verify the exact dashboard
+process before stopping it. `-Url http://127.0.0.1:<port>` selects another loopback
+origin. Each simultaneously running dashboard needs its own data directory.
+
 In another terminal, also at the repository root:
 
 ```powershell
 .\scripts\start-worker.ps1
 ```
 
+The launcher reloads changed worker source or locked dependencies at the next idle
+queue boundary, after owned work and manual browser review finish. It never retries
+failed jobs automatically. `-Background` runs a hidden worker and prints its PID
+and log directory under `data/worker-hosts/`.
+
+For a dashboard upgrade with an unclaimed test-implementation queue, stop the
+workers first, then use `./scripts/start-dashboard.ps1 -Restart -PreserveQueued
+-Background`. This explicit path preserves queued implementations and history;
+it refuses executing implementations, other active work or an incomplete queue
+inventory. Start the worker again after the dashboard is ready.
+
 Open [Getright on this computer](http://127.0.0.1:5120). Select **Run UAT test** on
 the Getright demo. The worker opens a browser, performs four repeatable steps and
 reports the result. Open its run history entry to inspect screenshots and download
 the trace. Accept the run, or choose a step and create an improvement task.
+
+Visible UAT runs leave the tested app open for manual review after saving their
+result and evidence. Close the test browser window when finished to let the worker
+continue its queue. Manual interaction after automation is outside the recorded
+run and does not change its result or acceptance. Ctrl+C stops the worker and its
+review browser. Headless runs and implementation-job regressions close automatically.
+Use `./scripts/start-worker.ps1 -AutoClose` for unattended visible runs.
+
+Each runnable case also has **Open test page**. It opens the configured running
+application's entry page in a left panel occupying half the window after checking
+the build and UAT identity. **Undock** opens the entry page in a standalone tab
+and closes the panel; save in-app changes first, since unsaved state and navigation
+are not transferred. **Close** restores the full dashboard. On narrow screens the
+panel stacks above the dashboard. Apps that block embedding can use **Undock**.
+It needs no worker and creates no run or acceptance decision. Keep the isolated
+application launcher running while reviewing. This opens the configured build;
+it does not build or relaunch a stopped improvement-job instance.
+
+The right panel starts with **Review latest run**, above Workflow detail. Accept
+or request improvements, choose a test step, and create an improvement task from
+your comment and requested outcome. Preview/download the prompt or prepare, edit
+and explicitly implement its Codex job in the same panel. If a newer run arrives,
+the displayed review and unsaved comment stay attached to their original run;
+select **Review latest run** to switch. Automation never accepts a run for you.
+
+## Test suites and generated cases
+
+Use **Test suite** in the control room to select a group of related cases. The
+initial suites contain the existing Getright, WriterApp and Virtual Company cases;
+their IDs and historical runs are preserved. Open **Manage suites & generate
+cases** (or **Test suites** in the sidebar) to create suites and choose existing
+cases for them.
+
+On the suite page, describe a feature, choose 1–10 cases, and select **Generate test
+cases**. OpenAI returns proposals with preconditions, actions, expected results and
+human review questions. Edit them, select the cases to keep, and choose **Add
+selected draft cases to suite**. Generation alone does not add cases. The original
+proposal and model/response identity are retained separately from edited cases.
+Added cases start as drafts with automation and open-page actions disabled.
+
+To make a draft runnable, select **Review draft** on its card. Above Workflow
+detail, choose **Approve and implement test case**. Start or restart the local
+worker with `./scripts/start-worker.ps1` so it loads implementation support. Codex
+creates a bounded workflow in a dedicated Git worktree; the worker commits it
+locally and validates every frozen step twice with fresh fixtures. Only two passing
+validations enable **Run UAT test** and **Open test page**. Human acceptance of
+application runs remains pending.
+
+Approval validates the isolated, clean source receipt without contacting its old
+manual-review instance. The worker builds and launches its own validation host.
+Running a verified test or opening its manual test page still checks the configured
+running application's build and identity. Missing/dirty source receipts are rejected.
+New implementation builds require 5 GiB available on both their worktree and data
+volumes (256 MiB for the demo); low space fails before creating a worktree and never
+deletes history, evidence or source automatically.
+
+Use **Approve all pending test cases** above the cards to queue every pending
+draft in the current application/suite filters at once. Choose **All applications**
+and **All suites** for all drafts. Already queued cases are skipped. The result
+lists each queued case or setup error; one blocked case does not stop the others.
+
+The **Test case generation progress** panel shows the latest automation attempt
+for every approved case in the current filters. It refreshes every three seconds,
+with queue/active/verified/error counts, current stages and messages, validation
+results and links to implementation details. Finished counts include failures and
+cancellations; only enabled, verified automation is shown as ready to run.
+
+The panel shows progress, cancellation, logs, errors and validation links. Missing
+fixture capabilities, unsupported actions and failed assertions leave the case
+disabled with a reason. For example, the current Virtual Company fixture creates
+a disconnected test company; it does not receive supplier invoices. Such scenarios
+need a trusted fixture extension before they can run. A supported workflow can be
+retried after fixing its prerequisite. Use **Disable test automation** to return a
+verified case to draft while retaining history. See [test implementation](docs/test-implementation.md).
+
+Generation requires a server-side OpenAI API key. In the PowerShell window used
+to start the dashboard:
+
+```powershell
+$env:OPENAI_API_KEY = Read-Host 'OpenAI API key' -MaskInput
+./scripts/start-dashboard.ps1 -Restart
+```
+
+The default model is `gpt-6-astra`; override it with `Getright__OpenAI__Model` if
+needed. The explicit generation action sends the feature description, suite name
+and application name to OpenAI, using its Responses API with a strict JSON schema
+and `store: false`. It sends no run evidence, browser auth or application secrets.
+Keep secrets out of suite descriptions. Keys stay on the server and are not
+returned by status APIs or saved with proposals. No automatic provider retries
+occur. Missing credentials, refusals, incomplete output and provider errors leave
+the suite unchanged. See [suite and generation contracts](docs/test-suites.md).
 
 For WriterApp, follow [the isolated host and setup instructions](docs/writerapp-uat.md).
 Its first adapter has been verified against an actual local build. Milestone 1
@@ -97,6 +215,7 @@ restricts profile writes, use the scripts for builds or set `DOTNET_CLI_HOME` an
 | `GETRIGHT_DASHBOARD_URL` | `http://127.0.0.1:5120` | Worker API origin; loopback HTTP only. |
 | `GETRIGHT_RUN_TIMEOUT_MS` | `180000` | Standalone run deadline, 1000–600000 ms. |
 | `GETRIGHT_HEADLESS` | unset / false | Set exactly `true` for headless execution. |
+| `GETRIGHT_KEEP_BROWSER_OPEN` | unset / true | Set exactly `false` to close visible UAT browsers after automation. |
 | `ASPNETCORE_URLS` | `http://127.0.0.1:5120` | Dashboard listening URL. Use a matching worker URL if changing the port. |
 
 Examples: `scripts/start-worker.ps1 -Headless`, or `-Once` to process at most one
@@ -119,6 +238,15 @@ npm run smoke --prefix worker
 npm run smoke:jobs --prefix worker
 npm run smoke:virtual-company --prefix worker
 npm run smoke:operations --prefix worker
+npm run smoke:review --prefix worker
+npm run smoke:suites --prefix worker
+npm run smoke:quick-review --prefix worker
+npm run smoke:test-page-panel --prefix worker
+npm run smoke:startup --prefix worker
+npm run smoke:case-implementation --prefix worker
+npm run smoke:bulk-approval --prefix worker
+npm run smoke:generation-progress --prefix worker
+npm run smoke:worker-launch --prefix worker
 ```
 
 The smoke check starts its own temporary dashboard on a free loopback port and
@@ -126,6 +254,13 @@ stores its database and screenshots in `.local/smoke-*`. It verifies the actual
 Blazor UI, queue claiming, browser persistence checks, evidence access, feedback
 export, independent acceptance, 390px layout, failed runs and restart recovery. It
 does not touch either target application's repositories or data.
+
+`smoke:case-implementation` uses a synthetic plan compiler with real Git and
+browser validation. The opt-in `npm run smoke:case-implementation:live --prefix
+worker` invokes actual Codex for a disposable note case. Add `-- --virtual-company`
+to also build the configured clean Virtual Company revision and validate a
+permission workflow using a synthetic plan compiler and fresh companies. It
+retains local worktrees/commits and pending human acceptance, with providers disabled.
 
 ## Development
 
@@ -144,6 +279,9 @@ documentation belong there. No product license has been selected for this starte
 
 Start the dashboard, then run `./scripts/start-virtual-company.ps1`. The launcher
 builds a clean isolated instance and saves its receipt to application setup.
+An observed native C# compiler crash (`Fatal error. 0xC0000005`) gets one bounded
+fresh-process build retry, with the original failure retained in the local log.
+Other build errors and cancellation stop immediately.
 The first workflow creates a test company, saves draft permissions and verifies
 reopening and access boundaries. See [Virtual Company UAT](docs/virtual-company-uat.md)
 for SDK requirements, fixture boundaries and the opt-in real Codex cycle.

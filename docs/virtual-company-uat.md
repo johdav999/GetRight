@@ -1,5 +1,14 @@
 # Virtual Company UAT
 
+The launcher retains build logs under `data/virtual-company/<instance-id>/`.
+If the .NET 9 C# compiler reports `Fatal error. 0xC0000005` from
+`Microsoft.CSharp.Core.targets`, Getright makes one fresh build-process attempt
+using the same source, SDK and version. Both attempts remain in the log. This is
+bounded recovery for an observed intermittent native compiler crash; ordinary C#
+errors, cancellation and other failures stop immediately. No application source
+or warnings are suppressed. The build already uses a single MSBuild node and
+[disables persistent build servers](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-build).
+
 The first workflow creates a test company, saves draft-only email permissions,
 and reopens its controls. It checks the actual owner membership, persisted
 permissions, employee read/write denial, outsider denial, and an unchanged
@@ -32,8 +41,14 @@ build version, actual user ID, reference company ID, owner role, clean source
 commit and Web assembly SHA-256. Setup fields can also be entered manually.
 
 Run **Create a test company and save permissions** in the control room. Review
-the four step screenshots and trace. Feedback can prepare an editable task;
-**Implement improvement** explicitly starts its Codex job. The worker uses the
+the four step screenshots and trace. Feedback can prepare an editable task.
+The visible worker leaves the tested company page open after recording the result.
+Review it, then close that browser window to resume the worker queue. Keep the
+Virtual Company launcher running while reviewing; stopping it discards its database.
+Manual edits after automation are outside the recorded evidence and do not accept
+the run. Headless and improvement-job regression browsers close automatically.
+
+**Implement improvement** explicitly starts a Codex job. The worker uses the
 Virtual Company repository and fixed build/launch adapter, creates a separate
 branch at the tested commit, builds the change, and reruns the frozen workflow
 with fresh data. The resulting run always awaits human acceptance.

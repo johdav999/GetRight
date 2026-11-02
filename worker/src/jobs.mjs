@@ -102,7 +102,7 @@ export async function executeJob(claim, configuration, adapters = {}) {
     host = await (adapters.launch || (job.applicationId === 'virtual-company' ? launchVirtualCompany : launchWriterApp))({ build, resultCommit, signal, log: launchLog });
     const rerunClaim = await api(configuration.dashboardUrl, route('rerun'), { lease, target: host.target });
     phase = 'rerunning'; await report('Running the original frozen test on the changed build with a fresh fixture.');
-    const rerun = await (adapters.run || executeRun)(rerunClaim, { ...configuration, signal: AbortSignal.any([signal, AbortSignal.timeout(180000)]) });
+    const rerun = await (adapters.run || executeRun)(rerunClaim, { ...configuration, keepBrowserOpen: false, signal: AbortSignal.any([signal, AbortSignal.timeout(180000)]) });
     if (rerun.status !== 'passed') throw new Error(`The changed build failed the regression test. Review run ${rerun.id}. ${rerun.error || ''}`);
     await host.stop(); host = null;
     finalStatus = 'awaiting-review';

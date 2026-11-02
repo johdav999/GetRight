@@ -28,6 +28,20 @@ The standalone browser deadline defaults to three minutes. Set
 worker to change it. Job Codex/build deadlines remain separately bounded.
 No automatic test retry is performed against possibly changed application data.
 
+If approved test cases remain **Queued**, distinguish that from an executing build
+or Codex turn. A worker started before test-implementation support was installed
+can keep polling older queue types indefinitely. Restart it once to load the new
+launcher. Current launchers check their source/dependency stamp before claims and
+reload at idle boundaries; they let owned work/manual review finish first and do
+not retry ordinary failures. The control room shows stage messages and validation
+proofs. A reported missing fixture is a terminal prerequisite failure, not a hung
+implementation or a passing test.
+
+For dashboard upgrades with only queued test implementations, stop workers and use
+`./scripts/start-dashboard.ps1 -Restart -PreserveQueued -Background`. This explicit
+path checks the complete unclaimed queue and preserves its original IDs/history.
+Executing cases, other active work and incomplete queue inventories still block it.
+
 Fixed Git, build and application commands run under a small separate process
 owner. If the worker dies without executing its `finally` block, the IPC channel
 closes and the owner stops the child it spawned. Normal cancellation stops owned
@@ -97,9 +111,37 @@ prune, automatic scheduled purge, or cleanup of normal target-app data is perfor
 
 ## Persistence and verification
 
-Schema 4 transactionally upgrades schemas 1–3, adding run lease expiry,
+Dashboard startup is repeatable: `scripts/start-dashboard.ps1` reuses a healthy
+instance before attempting any build or database access. Use `-Restart` to rebuild
+an idle instance, optionally with `-Background`; `scripts/stop-dashboard.ps1` stops
+an idle foreground/background instance. Both operations verify the listener's
+executable, process identity, data directory and active-work counts. Unrelated
+listeners and busy instances are left running. The current process holds a file
+handle in `data/dashboard.instance.json` before constructing RunStore, so a second
+dashboard cannot invalidate live run/job leases through startup recovery. The OS
+releases the handle on exit; do not delete its metadata file to force ownership.
+Background logs are retained in `data/dashboard-hosts/<id>/`.
+
+`npm run smoke:startup --prefix worker` checks these paths using copied build
+outputs and disposable data. Recorded validation:
+`.local/startup-1793639336147/startup-report.json`. It includes active work older
+than the latest-100 history window and an unrelated process impersonating health.
+
+The control room's right column provides acceptance, step comments, task previews
+and inline job preparation above Workflow detail. Review actions stay attached to
+the displayed run when a newer run arrives; use Review latest run to switch.
+The panel shows the run and build identity, disables review while automation is in
+progress, and uses existing transactional review/audit and revisioned job methods.
+The focused `npm run smoke:quick-review --prefix worker` verifies these controls,
+including explicit queue/cancel, concurrent task editing and mobile layout, using
+disposable synthetic fixtures without invoking Codex. Local validation is retained
+in `.local/quick-review-1793619759325/quick-review-report.json`.
+
+Schema 4 introduced run lease expiry,
 `review_events` and `cleanup_tasks`. Existing payloads and acceptance values remain;
 new optional run/job fields mark cancellation and retired evidence/worktrees.
+The current schema 5 transactionally upgrades versions 1–4 and also adds suites,
+draft case definitions and OpenAI proposals; see [test suites](test-suites.md).
 Older dashboard binaries refuse this newer schema. Keep database backups with the
 matching evidence directory when preserving a review session.
 

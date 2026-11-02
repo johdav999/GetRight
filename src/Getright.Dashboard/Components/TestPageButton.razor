@@ -1,0 +1,8 @@
+<button class="secondary open-test-page" disabled="@(!RendererInfo.IsInteractive)" @onclick="Open" title="Open the tested application in the left panel">Open test page</button>
+
+@code {
+    [CascadingParameter] public MainLayout Layout { get; set; } = default!;
+    [Parameter, EditorRequired] public string TestId { get; set; } = "";
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    private Task Open() => Layout.OpenTestPage(TestId, Title);
+}

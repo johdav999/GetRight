@@ -1,0 +1,57 @@
+@using Getright.Dashboard.Components.Pages
+@inject RunStore Store
+@inject ApplicationSetup Setup
+
+<section class="panel case-implementation" aria-label="Test case implementation">
+    <div class="panel-heading"><div><span class="eyebrow">DRAFT TO RUNNABLE</span><h2>Test case implementation</h2></div></div>
+    <div class="quick-review-body">
+        <p>Approve the case description and steps to have Codex implement its automation. The worker uses a dedicated worktree and validates it twice with fresh isolated fixtures.</p>
+        <p class="muted">This approves the test definition. Each application run still needs its own human acceptance.</p>
+        <p class="muted">Approval uses the clean application launch receipt. The worker starts its own isolated instance for validation.</p>
+        @if (Test.Implementation is { } implementation)
+        { <p class="success-text">Verified automation is enabled.</p><p class="mini-label">Implementation @implementation.ResultCommit[..8] · @implementation.VerifiedAt.ToLocalTime().ToString("g")</p> }
+        @if (job is { } current)
+        {
+            <div class="review-actions"><span class="badge @current.Status">@Home.Label(current.Status)</span><a href="/case-implementations/@current.Id">View implementation, plan and logs</a></div>
+            @if (current.Error is { } failure) { <p role="alert" class="error-text preserve-lines">@failure</p> }
+            @foreach (var item in events.TakeLast(3)) { <p class="quick-case-event"><span class="mini-label">@item.Stage</span>@item.Message</p> }
+            @if (current.ValidationRunIds is { Count: > 0 } validations) { <div class="review-actions">@foreach (var id in validations) { <a href="/runs/@id">Validation run @id[..8]</a> }</div> }
+            @if (current.Status == "queued" || CaseImplementationStates.Active(current.Status))
+            { <p class="muted">Start or restart the local worker to load test implementation support. Progress refreshes here.</p><button class="secondary" disabled="@(!RendererInfo.IsInteractive || current.CancelRequested)" @onclick="Cancel">Cancel implementation</button> }
+        }
+        @if (job is null || (job.Status != "queued" && !CaseImplementationStates.Active(job.Status)))
+        {
+            <div class="review-actions"><button disabled="@(busy || !RendererInfo.IsInteractive)" @onclick="Approve">@(Test.Implementation is null ? "Approve and implement test case" : "Reverify test implementation")</button>
+            @if (Test.Implementation is not null) { <button class="secondary" disabled="@(busy || !RendererInfo.IsInteractive)" @onclick="Disable">Disable test automation</button> }</div>
+        }
+        @if (error is not null) { <p role="alert" class="error-text">@error</p> }
+        @if (notice is not null) { <p role="status">@notice</p> }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public UatTest Test { get; set; } = null!;
+    [Parameter] public EventCallback Changed { get; set; }
+    private CaseImplementationJob? job;
+    private List<JobEvent> events = [];
+    private string? eventJobId;
+    private bool busy;
+    private string? error, notice;
+    protected override void OnParametersSet() { job = Store.CaseJobs(Test.Id).FirstOrDefault(); LoadEvents(); }
+    private void LoadEvents()
+    {
+        if (job?.Id != eventJobId) { events = []; eventJobId = job?.Id; }
+        if (job is null) return;
+        events.AddRange(Store.CaseEvents(job.Id, events.LastOrDefault()?.Sequence ?? 0));
+        if (events.Count > 100) events.RemoveRange(0, events.Count - 100);
+    }
+    private async Task Approve()
+    {
+        busy = true; error = notice = null;
+        try { job = await Setup.ApproveCase(Test.Id, new(RunStore.DefinitionDigest(Test))); LoadEvents(); notice = "Case approved and queued for implementation. Automation stays disabled until validation passes."; await Changed.InvokeAsync(); }
+        catch (ArgumentException exception) { error = exception.Message; }
+        finally { busy = false; }
+    }
+    private void Cancel() { try { if (job is not null) job = Store.CancelCaseJob(job.Id); error = null; notice = "Implementation cancellation requested."; } catch (ArgumentException exception) { error = exception.Message; } }
+    private async Task Disable() { Store.DisableCase(Test.Id); notice = "Automation disabled. Implementation records and run evidence are retained."; await Changed.InvokeAsync(); }
+}

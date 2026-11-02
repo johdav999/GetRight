@@ -14,5 +14,29 @@
   {
     "title": "4 — Operational polish and reliability",
     "description": "Implemented standalone run heartbeat, cancellation, deadlines, background recovery and owned process supervision; transactional review audit; paginated history and run comparison; explicit evidence retention and reviewed clean worktree cleanup with recovery journals. Validated repeated cycles, worker death, stale leases, restart, partial cleanup, dirty/path refusal and desktop/mobile flows. Local-only operation; remote authentication remains conditional on future hosting."
+  },
+  {
+    "title": "5 — Application manifests and reproducible configuration",
+    "description": "Planned. Define versioned JSON manifests, capability/extension contracts and typed resource results; introduce an integration registry around existing adapters. Freeze resolved non-secret definitions, binding identities, digests and required engine/extension versions in runs and linked reruns. Migrate legacy history without changing step IDs or acceptance. Complete when configuration edits cannot change queued/history runs, incompatible workers and incomplete results are rejected, and existing smoke checks pass. See docs/roadmap.md milestone 5."
+  },
+  {
+    "title": "6 — Configurable runtime, identity and fixtures",
+    "description": "Planned; depends on milestone 5. Implement bounded declarative HTTP/runtime checks, dedicated named identities and isolated sessions, fixture setup/teardown and typed resource capture. Verify build/account/scope/isolation before mutation; constrain origins, redirects, interpolation and secrets. Retain registered extensions for custom hosts. Complete when wrong targets block data creation and disposable tests prove session separation plus partial setup/cleanup handling. See docs/roadmap.md milestone 6."
+  },
+  {
+    "title": "7 — Declarative workflow execution",
+    "description": "Planned; depends on milestones 5 and 6. Execute validated browser/API actions, assertions, correlated response capture, named sessions and restricted variables through the shared runner. Preserve stable steps, evidence, deadlines, cancellation and independent human review; provide versioned extensions instead of arbitrary script execution. Complete when configuration-only create/save/reopen with backend readback and negative/failure paths uses the normal UAT lifecycle. See docs/roadmap.md milestone 7."
+  },
+  {
+    "title": "8 — Trusted build and launch recipes",
+    "description": "Planned; depends on milestones 5–7. Replace app branches in job orchestration with trusted local repository/build/launch recipes and explicit host extensions. Bound executable/argument/environment inputs, own child processes, generalize receipts/version injection and separate testing from implementation capabilities. Preserve dedicated worktrees, base/result commits and verified frozen-workflow reruns. Complete when two recipe shapes pass synthetic job/failure checks without app-ID branches; live Codex remains opt-in and acceptance pending. See docs/roadmap.md milestone 8."
+  },
+  {
+    "title": "9 — Dashboard configuration and readiness",
+    "description": "Planned; depends on milestones 5–8. Drive application setup from manifests; import/revise definitions, bind local settings and select authorized recipe IDs. Provide read-only preflight, capability blockers, qualification-based workflow enablement and frozen configuration attribution in review. Keep worker command authorization outside the API. Complete when desktop/mobile configuration and failure flows work, readiness cannot be bypassed, and history/acceptance survive edits. See docs/roadmap.md milestone 9."
+  },
+  {
+    "title": "10 — Integration migration and third-application proof",
+    "description": "Planned; depends on milestones 5–9. Migrate existing demo/WriterApp/Virtual Company workflows with equivalent persistence, identity, isolation and permission checks; remove obsolete core app branches while retaining explicit custom extensions and legacy history. Onboard a disposable third app on another stack using only definitions and trusted recipe bindings, then prove test/feedback/build/rerun, including a separate opt-in real Codex cycle. Complete when migration suites and fresh live target runs pass and third-app onboarding changes no core source. Human acceptance remains independent. See docs/roadmap.md milestone 10."
   }
 ]

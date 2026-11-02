@@ -1,0 +1,127 @@
+@page "/suites"
+@using System.Text.Json
+@inject RunStore Store
+@inject UatCatalogue Catalogue
+@inject CaseGeneration Generation
+@implements IAsyncDisposable
+
+<PageTitle>Test suites · Getright</PageTitle>
+<div class="topbar"><a href="/">Test control room</a><span>Test suites</span></div>
+<header class="page-header"><div><p class="eyebrow">PLAN A FEATURE, REVIEW EACH CASE</p><h1>Test suites</h1><p class="muted">Organize related test cases and turn a feature description into draft UAT cases.</p></div><button class="secondary" disabled="@Busy" @onclick="NewSuite">New suite</button></header>
+@if (error is not null) { <p role="alert" class="notice error">@error</p> }
+@if (notice is not null) { <p role="status" class="notice">@notice</p> }
+<div class="suite-workspace">
+<section class="panel suite-list" aria-label="Your test suites"><div class="panel-heading"><h2>Your suites</h2><span class="counter">@suites.Count</span></div>
+    @foreach (var suite in suites) { <button class="suite-choice @(selected?.Id == suite.Id ? "selected" : "")" disabled="@Busy" @onclick="() => Select(suite.Id)"><strong>@suite.Name</strong><span>@AppName(suite.ApplicationId) · @suite.TestIds.Count @(suite.TestIds.Count == 1 ? "case" : "cases")</span></button> }
+</section>
+<div class="suite-content">
+<section class="panel"><div class="panel-heading"><h2>@(selected is null ? "Create a test suite" : "Suite details")</h2></div><div class="suite-form">
+    <label for="suite-app">Application</label><select id="suite-app" @bind="applicationId" @bind:after="ResetMembers" disabled="@(Busy || selected is not null)">@foreach (var app in Catalogue.Value.Applications) { <option value="@app.Id">@app.Name</option> }</select>
+    <label for="suite-name">Suite name</label><input id="suite-name" @bind="name" @bind:event="oninput" maxlength="120" disabled="@Busy" />
+    <label for="suite-description">Suite description</label><textarea id="suite-description" @bind="description" @bind:event="oninput" maxlength="4000" rows="3" disabled="@Busy"></textarea>
+    <details class="suite-members"><summary>Add or remove existing cases (@members.Count selected)</summary>
+        @foreach (var test in tests.Where(t => t.ApplicationId == applicationId)) { <label class="checkbox-label"><input type="checkbox" checked="@members.Contains(test.Id)" @onchange="e => SetMember(test.Id, e.Value is true)" disabled="@Busy" /> @test.Title <span class="badge @test.Readiness">@Home.Label(test.Readiness)</span></label> }
+    </details>
+    <div class="review-actions"><button disabled="@Busy" @onclick="Save">@(selected is null ? "Create suite" : "Save suite")</button><a href="/">Review cases in control room</a></div>
+</div></section>
+@if (selected is not null)
+{
+<section class="panel"><div class="panel-heading"><div><h2>Generate test cases</h2><p>Describe a feature or functionality in @AppName(selected.ApplicationId).</p></div></div><div class="suite-form">
+    <p class="muted">Generation sends your description, suite name and application name to OpenAI. It uses no run evidence or application credentials. Review the proposals before adding them.</p>
+    @if (!Generation.Configured) { <div class="notice">Set <code>OPENAI_API_KEY</code> in the dashboard's PowerShell environment, then restart the dashboard to enable generation.</div> }
+    <p class="mini-label">Model: @Generation.ModelName</p>
+    <label for="feature">Feature or functionality</label><textarea id="feature" @bind="feature" @bind:event="oninput" maxlength="8000" rows="5" disabled="@Busy" placeholder="Example: Owners can save draft-email permissions for a test company. Employees cannot change them. Changes must survive a page reload."></textarea>
+    <label for="case-count">Number of test cases</label><input id="case-count" type="number" min="1" max="10" @bind="caseCount" disabled="@Busy" />
+    <div class="review-actions"><button disabled="@(Busy || !Generation.Configured)" @onclick="Generate">@(generating ? "Generating…" : "Generate test cases")</button>@if (generating) { <button class="secondary" @onclick="CancelGeneration">Cancel generation</button> }</div>
+    @if (proposals.Count > 0) { <details><summary>Previous proposals</summary>@foreach (var item in proposals) { <button class="proposal-history secondary" disabled="@Busy" @onclick="() => Preview(item)">@item.CreatedAt.ToLocalTime().ToString("g") · @item.Cases.Count cases · @(item.AppliedAt is null ? "Not added" : "Added")</button> }</details> }
+</div></section>
+}
+@if (proposal is not null)
+{
+<section class="panel proposal-preview"><div class="panel-heading"><div><h2>Review generated cases</h2><p>@proposal.Model · @proposal.Cases.Count proposed · @(proposal.AppliedAt is null ? "Not added to suite" : $"{drafts.Count} draft cases added")</p></div></div><div class="suite-form">
+    <p class="muted preserve-lines">Feature: @proposal.Feature</p>
+    @if (proposal.AppliedAt is null) { <p>Choose the cases to add and edit their wording. Added cases stay <strong>Draft</strong> until repeatable adapters and isolated execution are implemented.</p> }
+    else { <p>Showing the selected cases as saved, including your edits. The original OpenAI proposal is retained separately. These cases remain <strong>Draft</strong>.</p> }
+    @for (var index = 0; index < drafts.Count; index++)
+    {
+        var draft = drafts[index]; var prefix = $"proposal-{index}";
+        <article class="proposal-case" @key="draft">
+            <label class="checkbox-label"><input type="checkbox" @bind="draft.Include" disabled="@(Busy || proposal.AppliedAt is not null)" /> Include case @(index + 1)</label>
+            <label for="@(prefix + "-title")">Case title</label><input id="@(prefix + "-title")" @bind="draft.Case.Title" @bind:event="oninput" maxlength="180" disabled="@(Busy || proposal.AppliedAt is not null)" />
+            <label for="@(prefix + "-purpose")">Purpose</label><textarea id="@(prefix + "-purpose")" @bind="draft.Case.Purpose" @bind:event="oninput" maxlength="2000" rows="2" disabled="@(Busy || proposal.AppliedAt is not null)"></textarea>
+            <label for="@(prefix + "-preconditions")">Preconditions</label><textarea id="@(prefix + "-preconditions")" @bind="draft.Case.Preconditions" @bind:event="oninput" maxlength="3000" rows="2" disabled="@(Busy || proposal.AppliedAt is not null)"></textarea>
+            <label for="@(prefix + "-review")">Human review question</label><textarea id="@(prefix + "-review")" @bind="draft.Case.ReviewQuestion" @bind:event="oninput" maxlength="1000" rows="2" disabled="@(Busy || proposal.AppliedAt is not null)"></textarea>
+            @for (var stepIndex = 0; stepIndex < draft.Case.Steps.Count; stepIndex++)
+            { var step = draft.Case.Steps[stepIndex]; var stepPrefix = $"{prefix}-step-{stepIndex}";
+                <div class="proposal-step"><label for="@(stepPrefix + "-action")">Step @(stepIndex + 1) action</label><textarea id="@(stepPrefix + "-action")" @bind="step.Action" @bind:event="oninput" maxlength="1000" rows="2" disabled="@(Busy || proposal.AppliedAt is not null)"></textarea><label for="@(stepPrefix + "-expected")">Expected result</label><textarea id="@(stepPrefix + "-expected")" @bind="step.Expected" @bind:event="oninput" maxlength="1500" rows="2" disabled="@(Busy || proposal.AppliedAt is not null)"></textarea></div>
+            }
+        </article>
+    }
+    <button disabled="@(Busy || proposal.AppliedAt is not null || !drafts.Any(d => d.Include))" @onclick="Apply">Add selected draft cases to suite</button>
+</div></section>
+}
+</div></div>
+
+@code {
+    private List<TestSuite> suites = [];
+    private List<UatTest> tests = [];
+    private List<CaseProposal> proposals = [];
+    private TestSuite? selected;
+    private CaseProposal? proposal;
+    private List<CaseDraft> drafts = [];
+    private HashSet<string> members = [];
+    private string applicationId = "virtual-company", name = "", description = "", feature = "";
+    private int caseCount = 5;
+    private bool generating;
+    private string? error, notice;
+    private CancellationTokenSource? generationStop;
+    private bool Busy => generating || !RendererInfo.IsInteractive;
+    private sealed class CaseDraft(ProposedCase test) { public ProposedCase Case { get; } = test; public bool Include { get; set; } = true; }
+    protected override void OnInitialized() { Refresh(); if (suites.FirstOrDefault(s => s.ApplicationId == "virtual-company") is { } suite) Select(suite.Id); }
+    private void Refresh() { suites = Store.Suites(); tests = Store.Tests(); }
+    private string AppName(string id) => Catalogue.Value.Applications.First(a => a.Id == id).Name;
+    private void Select(string id)
+    {
+        selected = Store.Suite(id); applicationId = selected.ApplicationId; name = selected.Name; description = selected.Description;
+        members = selected.TestIds.ToHashSet(); proposals = Store.Proposals(id); proposal = null; drafts = []; feature = ""; error = notice = null;
+    }
+    private void NewSuite() { selected = null; name = description = feature = ""; members = []; proposal = null; drafts = []; proposals = []; error = notice = null; }
+    private void ResetMembers() => members.Clear();
+    private void SetMember(string id, bool include) { if (include) members.Add(id); else members.Remove(id); }
+    private void Save()
+    {
+        try {
+            var saved = selected is null ? Store.CreateSuite(new(applicationId, name, description, members.ToList())) : Store.EditSuite(selected.Id, new(selected.Revision, name, description, members.ToList()));
+            Refresh(); Select(saved.Id); notice = "Suite saved. Generate cases or return to the control room.";
+        } catch (ArgumentException exception) { error = exception.Message; notice = null; }
+    }
+    private async Task Generate()
+    {
+        if (selected is null || generating) return;
+        generating = true; error = notice = null; generationStop = new();
+        try { var result = await Generation.Generate(selected.Id, new(feature, caseCount), generationStop.Token); proposals = Store.Proposals(selected.Id); Preview(result); notice = "Proposals generated. Review and edit them before adding cases to the suite."; }
+        catch (OperationCanceledException) { notice = "Generation cancelled. No cases were added."; }
+        catch (ArgumentException exception) { error = exception.Message; }
+        finally { generating = false; generationStop.Dispose(); generationStop = null; }
+    }
+    private void CancelGeneration() => generationStop?.Cancel();
+    private void Preview(CaseProposal item)
+    {
+        proposal = item; feature = item.Feature;
+        var cases = item.AppliedAt is null ? item.Cases : (item.TestIds ?? []).Select(Store.Test).Select(t => new ProposedCase {
+            Title = t.Title, Purpose = t.Purpose, Preconditions = t.Preconditions ?? "", ReviewQuestion = t.ReviewQuestion,
+            Steps = t.Steps.Select(s => new ProposedStep { Action = s.Title, Expected = s.Expected }).ToList()
+        }).ToList();
+        drafts = JsonSerializer.Deserialize<List<ProposedCase>>(JsonSerializer.Serialize(cases, AppJson.Options), AppJson.Options)!.Select(c => new CaseDraft(c)).ToList();
+    }
+    private void Apply()
+    {
+        if (selected is null || proposal is null) return;
+        try {
+            var suiteId = selected.Id; var proposalId = proposal.Id;
+            Store.ApplyProposal(suiteId, proposalId, new(drafts.Where(d => d.Include).Select(d => d.Case).ToList()));
+            Refresh(); Select(suiteId); Preview(proposals.First(p => p.Id == proposalId)); notice = "Selected cases added as drafts. Automation stays disabled until their adapters and UAT setup are ready.";
+        } catch (ArgumentException exception) { error = exception.Message; notice = null; }
+    }
+    public ValueTask DisposeAsync() { generationStop?.Cancel(); return ValueTask.CompletedTask; }
+}

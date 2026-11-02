@@ -13,4 +13,6 @@ test('worker accepts only a local dashboard origin', () => {
 test('worker uses visible browsers unless headless is explicitly selected', () => {
   assert.equal(settings({}).headless, false);
   assert.equal(settings({ GETRIGHT_HEADLESS: 'true' }).headless, true);
+  assert.equal(settings({}).keepBrowserOpen, true);
+  assert.equal(settings({ GETRIGHT_KEEP_BROWSER_OPEN: 'false' }).keepBrowserOpen, false);
 });

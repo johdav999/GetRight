@@ -27,7 +27,7 @@ legacyDb.prepare('INSERT INTO runs(id,payload) VALUES(?,?)').run(legacyRun.id, J
 legacyDb.close();
 const configuration = { dashboardUrl: origin, dataPath, headless: true };
 const projectPath = path.join(repositoryRoot, 'src/Getright.Dashboard');
-const dll = path.join(projectPath, 'bin/Release/net10.0/Getright.Dashboard.dll');
+const dll = process.env.GETRIGHT_DASHBOARD_DLL || path.join(projectPath, 'bin/Release/net10.0/Getright.Dashboard.dll');
 let server, browser, writerHost, logs = '';
 
 async function start() {

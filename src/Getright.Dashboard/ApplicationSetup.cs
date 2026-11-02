@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace Getright.Dashboard;
 
-public sealed class ApplicationSetup(RunStore store, UatCatalogue catalogue, ILogger<ApplicationSetup> logger)
+public sealed class ApplicationSetup(RunStore store, ILogger<ApplicationSetup> logger)
 {
     public static void Validate(ApplicationProfile profile)
     {
@@ -73,15 +73,56 @@ public sealed class ApplicationSetup(RunStore store, UatCatalogue catalogue, ILo
     }
     public async Task<UatRun> Queue(string testId, CancellationToken cancellationToken = default)
     {
-        var test = catalogue.Get(testId);
+        var test = store.Test(testId);
         if (test.ApplicationId == "getright") return store.Queue(testId);
         if (!Supported(test.ApplicationId, test.Adapter)) throw new ArgumentException("This workflow's adapter is not implemented yet.");
         var profile = store.Profile(test.ApplicationId) ?? throw new ArgumentException("Configure the local application instance first.");
+        ValidateWorkflowTarget(test, profile);
         var readiness = await Check(profile, cancellationToken);
         if (!readiness.Ready) throw new ArgumentException(readiness.Message);
         return store.Queue(testId, profile);
     }
     public static bool Supported(string applicationId, string? adapter) =>
         (applicationId == "writerapp" && adapter == "writerapp-create-save") ||
-        (applicationId == "virtual-company" && adapter == "virtual-company-test-setup");
+        (applicationId == "virtual-company" && adapter == "virtual-company-test-setup") ||
+        (applicationId is "getright" or "writerapp" or "virtual-company" && adapter == WorkflowContract.Adapter);
+
+    public static void ValidateWorkflowTarget(UatTest test, ApplicationProfile? profile)
+    {
+        if (test.Adapter != WorkflowContract.Adapter) return;
+        if (test.Implementation is not { } implementation || test.Readiness != "ready" ||
+            implementation.DefinitionDigest != RunStore.DefinitionDigest(test) || implementation.PlanDigest != WorkflowContract.Hash(implementation.PlanJson))
+            throw new ArgumentException("This test needs a verified implementation before it can run.");
+        if (test.ApplicationId != "getright" && (profile is null || profile.SourceWasDirty || profile.SourceCommit != implementation.ApplicationSourceCommit))
+            throw new ArgumentException("This workflow was verified against another application revision. Approve and implement it again against the current clean launch receipt.");
+    }
+
+    public Task<CaseImplementationJob> ApproveCase(string id, ApproveCaseRequest request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var test = store.Test(id);
+        ApplicationProfile? profile = null;
+        if (test.ApplicationId != "getright")
+        {
+            profile = store.Profile(test.ApplicationId) ?? throw new ArgumentException("Configure an isolated application launch receipt first.");
+        }
+        // Approval freezes the clean source receipt, not the lifetime of a
+        // manually launched host. The worker builds/starts and verifies its own
+        // isolated runtime before either validation can enable the case.
+        return Task.FromResult(store.ApproveCase(id, request, profile));
+    }
+
+    public async Task<string> TestPage(string testId, CancellationToken cancellationToken = default)
+    {
+        var test = store.Test(testId);
+        if (test.Readiness == "draft") throw new ArgumentException("This test case is a draft. Its entry page has not been verified yet.");
+        if (test.ApplicationId == "getright" && test.Adapter == "getright-save-note") return $"/uat-fixture.html?fixture=uat-{Guid.NewGuid():N}";
+        if (!Supported(test.ApplicationId, test.Adapter)) throw new ArgumentException("This test case does not have a verified entry page yet.");
+        var profile = store.Profile(test.ApplicationId) ?? throw new ArgumentException("Configure the local application instance first.");
+        ValidateWorkflowTarget(test, profile);
+        var readiness = await Check(profile, cancellationToken);
+        if (!readiness.Ready) throw new ArgumentException(readiness.Message);
+        var entry = test.Implementation is { } implementation ? WorkflowContract.Validate(test, implementation.PlanJson).ReviewPath : test.ApplicationId == "virtual-company" ? "/test-companies/new" : "/app/documents";
+        return new Uri(new Uri(profile.BaseUrl), entry).AbsoluteUri;
+    }
 }
