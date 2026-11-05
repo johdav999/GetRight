@@ -31,6 +31,8 @@ try {
   await expect(panel.getByRole('button', { name: 'Accept this run', exact: true })).toBeEnabled();
   await panel.getByRole('button', { name: 'Accept this run', exact: true }).click(); await expect(panel.getByRole('status')).toContainText('Review saved');
   assert.equal((await api(origin, `/api/runs/${completed.id}`)).acceptance, 'accepted');
+  await expect(panel.getByRole('button', { name: 'Run accepted', exact: true })).toBeDisabled();
+  await expect(panel.getByRole('status')).toContainText('Review saved: Accepted.');
   await panel.getByRole('button', { name: 'Request improvements', exact: true }).click();
   await expect(panel.locator('.quick-run-status .badge.improvements-requested')).toBeVisible();
   await panel.getByRole('button', { name: 'Reset to pending', exact: true }).click();

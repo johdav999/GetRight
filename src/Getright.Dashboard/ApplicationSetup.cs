@@ -71,16 +71,16 @@ public sealed class ApplicationSetup(RunStore store, ILogger<ApplicationSetup> l
             return new(false, "Cannot verify the local application instance. Check that it is running and returning the expected version and account.");
         }
     }
-    public async Task<UatRun> Queue(string testId, CancellationToken cancellationToken = default)
+    public async Task<UatRun> Queue(string testId, CancellationToken cancellationToken = default, bool docked = false, bool stepByStep = false)
     {
         var test = store.Test(testId);
-        if (test.ApplicationId == "getright") return store.Queue(testId);
+        if (test.ApplicationId == "getright") return store.Queue(testId, docked: docked, stepByStep: stepByStep);
         if (!Supported(test.ApplicationId, test.Adapter)) throw new ArgumentException("This workflow's adapter is not implemented yet.");
         var profile = store.Profile(test.ApplicationId) ?? throw new ArgumentException("Configure the local application instance first.");
         ValidateWorkflowTarget(test, profile);
         var readiness = await Check(profile, cancellationToken);
         if (!readiness.Ready) throw new ArgumentException(readiness.Message);
-        return store.Queue(testId, profile);
+        return store.Queue(testId, profile, docked, stepByStep);
     }
     public static bool Supported(string applicationId, string? adapter) =>
         (applicationId == "writerapp" && adapter == "writerapp-create-save") ||
@@ -110,6 +110,15 @@ public sealed class ApplicationSetup(RunStore store, ILogger<ApplicationSetup> l
         // manually launched host. The worker builds/starts and verifies its own
         // isolated runtime before either validation can enable the case.
         return Task.FromResult(store.ApproveCase(id, request, profile));
+    }
+
+    public Task<CaseImplementationJob> RetryCase(string id, ApproveCaseRequest request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var previous = store.CaseJob(id);
+        var profile = previous.ApplicationId == "getright" ? null
+            : store.Profile(previous.ApplicationId) ?? throw new ArgumentException("Configure an isolated application launch receipt first.");
+        return Task.FromResult(store.RetryCase(id, request, profile));
     }
 
     public async Task<string> TestPage(string testId, CancellationToken cancellationToken = default)

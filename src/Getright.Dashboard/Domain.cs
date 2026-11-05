@@ -16,7 +16,7 @@ public record UatRun(string Id, string TestId, string ApplicationId, string Stat
     string? BaseUrl, List<StepResult> Steps, string? Trace, string? Error,
     UatTest TestSnapshot, ApplicationProfile? Target = null, ExecutionIdentity? Identity = null,
     string? ImprovementJobId = null, string? ParentRunId = null, bool CancelRequested = false, DateTimeOffset? EvidenceRetiredAt = null,
-    string? CaseImplementationJobId = null);
+    string? CaseImplementationJobId = null, bool Docked = false, bool StepByStep = false, List<string>? AssistedSteps = null);
 public record ApplicationProfile(string ApplicationId, string BaseUrl, string ExpectedBuildVersion,
     string ExpectedUserId, bool IsolatedDataConfirmed, string? SourceCommit = null, bool SourceWasDirty = false,
     string? ExpectedCompanyId = null, string? ExpectedRole = null);
@@ -27,7 +27,7 @@ public record Feedback(string Id, string RunId, string StepId, string Comment,
     string RequestedOutcome, DateTimeOffset CreatedAt, string Prompt);
 public record FeedbackRequest(string StepId, string Comment, string RequestedOutcome);
 public record ReviewRequest(string Acceptance);
-public record QueueRequest(string TestId);
+public record QueueRequest(string TestId, bool Docked = false, bool StepByStep = false);
 public record CompletionRequest(string Lease, string Status, string? BuildVersion,
     string? BaseUrl, List<StepResult>? Steps, string? Trace, string? Error, ExecutionIdentity? Identity = null);
 public record RunLease(UatRun Run, string Lease);

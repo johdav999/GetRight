@@ -38,7 +38,7 @@ public sealed partial class RunStore
                   (SELECT COUNT(*) FROM runs WHERE json_extract(payload,'$.status') IN ('queued','running')),
                   (SELECT COUNT(*) FROM improvement_jobs WHERE json_extract(payload,'$.status') IN ('queued','preparing','implementing','building','launching','rerunning')),
                   (SELECT COUNT(*) FROM cleanup_tasks WHERE json_extract(payload,'$.status') IN ('queued','running')),
-                  (SELECT COUNT(*) FROM case_implementation_jobs WHERE json_extract(payload,'$.status') IN ('queued','preparing','building','implementing','validating'))
+                  (SELECT COUNT(*) FROM case_implementation_jobs WHERE json_extract(payload,'$.status') IN ('queued','preparing','planning','building','implementing','validating'))
                 """;
             using var reader = cmd.ExecuteReader(); reader.Read();
             return new { runs = reader.GetInt32(0), jobs = reader.GetInt32(1), cleanup = reader.GetInt32(2), caseImplementations = reader.GetInt32(3) };

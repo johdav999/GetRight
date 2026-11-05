@@ -21,10 +21,12 @@
                 {
                     var job = row.Job;
                     <li class="generation-case" @key="job.Id">
-                        <div class="generation-case-heading"><a href="/case-implementations/@job.Id">@job.TestSnapshot.Title</a><span class="badge @job.Status">@(row.Ready ? "Ready" : Stage(job.Status))</span></div>
+                        <div class="generation-case-heading"><a href="/case-implementations/@job.Id">@job.TestSnapshot.Title</a><span class="badge @job.Status">@(row.Ready ? "Ready" : CaseImplementationStates.Blocked(job) ? "Prerequisites missing" : Stage(job.Status))</span></div>
                         <p class="generation-case-message preserve-lines">@(job.Error ?? row.Latest?.Message ?? "Waiting for the local worker.")</p>
+                        @if (job.SharedBuild is { } shared) { <p class="muted">Shared application build @shared.BuildVersion · <a href="/case-implementations/@shared.OwnerJobId">build details</a> · separate validation host for this case.</p> }
                         @if (job.Status == "verified" && !row.Ready) { <p class="muted">Automation is disabled or needs reverification for the configured build.</p> }
                         @if (job.CancelRequested && CaseImplementationStates.Active(job.Status)) { <p class="muted">Cancellation requested.</p> }
+                        @if (CaseImplementationStates.Retryable(job.Status)) { <RetryCaseGeneration Job="job" Queued="OnRetryQueued" /> }
                         @if (row.Validations.Count > 0)
                         {
                             <div class="generation-validations"><span>@row.Validations.Count(r => r.Status == "passed")/2 validations passed</span>
@@ -41,18 +43,20 @@
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<UatTest> Tests { get; set; } = [];
+    [Parameter] public EventCallback Changed { get; set; }
+    private async Task OnRetryQueued(CaseImplementationJob _) { await Changed.InvokeAsync(); OnParametersSet(); }
     private record ProgressRow(CaseImplementationJob Job, JobEvent? Latest, List<UatRun> Validations, bool Ready);
     private List<ProgressRow> rows = [];
     private int Queued => rows.Count(r => r.Job.Status == "queued");
     private int Active => rows.Count(r => CaseImplementationStates.Active(r.Job.Status));
     private int Verified => rows.Count(r => r.Job.Status == "verified");
-    private int Attention => rows.Count(r => r.Job.Status is "failed" or "interrupted");
+    private int Attention => rows.Count(r => r.Job.Status is "failed" or "interrupted" or "blocked");
     private int Cancelled => rows.Count(r => r.Job.Status == "cancelled");
     private int Finished => Verified + Attention + Cancelled;
     protected override void OnParametersSet()
     {
         rows = Store.LatestCaseJobs(Tests.Select(t => t.Id))
-            .OrderBy(j => CaseImplementationStates.Active(j.Status) ? 0 : j.Status == "queued" ? 1 : j.Status is "failed" or "interrupted" ? 2 : 3)
+            .OrderBy(j => CaseImplementationStates.Active(j.Status) ? 0 : j.Status == "queued" ? 1 : j.Status is "failed" or "interrupted" or "blocked" ? 2 : 3)
             .ThenByDescending(j => j.UpdatedAt)
             .Select(j => new ProgressRow(j, Store.LatestCaseEvent(j.Id), (j.ValidationRunIds ?? []).Select(Store.Get).ToList(), Ready(j))).ToList();
     }
@@ -64,5 +68,5 @@
         var profile = Store.Profile(test.ApplicationId);
         return profile is not null && !profile.SourceWasDirty && profile.SourceCommit == test.Implementation.ApplicationSourceCommit;
     }
-    private static string Stage(string status) => status == "implementing" ? "Generating automation" : Home.Label(status);
+    private static string Stage(string status) => status switch { "planning" => "Checking prerequisites and generating automation", "implementing" => "Generating automation", _ => Home.Label(status) };
 }

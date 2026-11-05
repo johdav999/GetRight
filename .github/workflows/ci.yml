@@ -33,8 +33,15 @@ jobs:
       - run: npm run smoke:review --prefix worker
       - run: npm run smoke:suites --prefix worker
       - run: npm run smoke:quick-review --prefix worker
+      - run: npm run smoke:step-description --prefix worker
       - run: npm run smoke:startup --prefix worker
       - run: npm run smoke:case-implementation --prefix worker
+      - run: npm run smoke:case-batch --prefix worker
       - run: npm run smoke:bulk-approval --prefix worker
       - run: npm run smoke:generation-progress --prefix worker
+      - run: npm run smoke:case-generation-retry --prefix worker
+      - run: npm run smoke:case-prerequisites --prefix worker
+      - run: npm run smoke:live-dock --prefix worker
+      - run: npm run smoke:steps --prefix worker
       - run: npm run smoke:worker-launch --prefix worker
+      - run: npm run smoke:independent-reviews --prefix worker

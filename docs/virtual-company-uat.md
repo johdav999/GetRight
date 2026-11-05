@@ -1,13 +1,22 @@
 # Virtual Company UAT
 
 The launcher retains build logs under `data/virtual-company/<instance-id>/`.
-If the .NET 9 C# compiler reports `Fatal error. 0xC0000005` from
-`Microsoft.CSharp.Core.targets`, Getright makes one fresh build-process attempt
+If the .NET 9 C# compiler reports `Fatal error. 0xC0000005` or
+`Fatal error. System.AccessViolationException` from
+`Microsoft.CSharp.Core.targets`, or `MSB6006` reports `csc.dll` exiting with
+`-1073741819` (the signed form of the same status), Getright makes one fresh build-process attempt
 using the same source, SDK and version. Both attempts remain in the log. This is
 bounded recovery for an observed intermittent native compiler crash; ordinary C#
 errors, cancellation and other failures stop immediately. No application source
-or warnings are suppressed. The build already uses a single MSBuild node and
-[disables persistent build servers](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-build).
+or warnings are suppressed. The UAT build uses a single MSBuild node,
+[disables persistent build servers](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-build),
+and explicitly disables shared C# compilation. A generated compiler response file
+passes `/parallel-` to serialize Roslyn compilation as well as MSBuild projects.
+This configuration is part of the shared-build recipe identity; it does not
+modify the application's committed source or skip migration projects.
+See Microsoft's explanation of [MSB6006 tool failures](https://learn.microsoft.com/en-us/visualstudio/msbuild/diagnosing-task-failures)
+and [access violation C0000005](https://learn.microsoft.com/en-us/shows/inside/c0000005).
+This recovery does not identify or repair the compiler's internal native defect.
 
 The first workflow creates a test company, saves draft-only email permissions,
 and reopens its controls. It checks the actual owner membership, persisted
@@ -18,12 +27,22 @@ its original `workflow` step ID is preserved.
 ## Start a local instance
 
 Install the SDK required by the Virtual Company checkout (`global.json`, currently
-.NET 9.0.317), Node 24+, and Getright's worker dependencies and Chromium. Start
-Getright first, then run from the Getright repository:
+.NET 9.0.317), Node 24+, and Getright's worker dependencies and Chromium. Run
+from the Getright repository:
 
 ```powershell
 ./scripts/start-virtual-company.ps1
 ```
+
+The script starts Getright in the background if it is stopped, or reuses the
+healthy dashboard without rebuilding or restarting it. The dashboard's existing
+origin, data-directory and unrelated-port checks remain enforced. To reuse an
+already built dashboard on cold startup, pass `-NoDashboardBuild`. A dashboard
+startup failure stops before any Virtual Company worktree or host is created.
+Start the test worker separately with `./scripts/start-worker.ps1`.
+Direct `node worker/src/start-virtual-company.mjs` invocation with
+`GETRIGHT_DASHBOARD_URL` requires a running dashboard; connection failure prints
+the exact startup command instead of an unhandled fetch stack trace.
 
 The launcher reads the trusted `virtual-company.repositoryPath` in
 `config/worker.local.json`, defaulting to `../Virtual Company`. See

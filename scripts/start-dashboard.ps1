@@ -1,7 +1,7 @@
 param([switch]$NoBuild, [switch]$Restart, [switch]$Background, [switch]$PreserveQueued, [string]$Url)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
-if ($PreserveQueued -and -not $Restart) { throw '-PreserveQueued requires -Restart. Stop workers before preserving a queued implementation batch.' }
+if ($PreserveQueued -and -not $Restart) { throw '-PreserveQueued requires -Restart. Stop workers before preserving queued tests or implementation jobs.' }
 . (Join-Path $PSScriptRoot 'dashboard-instance.ps1')
 $taskSettings = Get-GetrightSettings $projectRoot $Url
 $taskHealth = Get-GetrightHealth $taskSettings

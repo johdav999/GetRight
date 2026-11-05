@@ -26,7 +26,7 @@ function seed(applicationId, title, steps) {
   db.prepare('INSERT INTO draft_test_cases(id,suite_id,payload) VALUES(?,?,?)').run(id, `${applicationId}-suite`, JSON.stringify(test)); db.close(); return test;
 }
 async function approve(test) {
-  await browser?.close(); browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(origin);
+  await browser?.close(); browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(origin+'/?view=generation');
   await page.getByRole('button', { name: test.title, exact: true }).click();
   await page.getByRole('button', { name: 'Approve and implement test case', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Test case implementation' })).toContainText('Case approved and queued');

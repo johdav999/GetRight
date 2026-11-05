@@ -8,18 +8,20 @@
         <p>Approve the case description and steps to have Codex implement its automation. The worker uses a dedicated worktree and validates it twice with fresh isolated fixtures.</p>
         <p class="muted">This approves the test definition. Each application run still needs its own human acceptance.</p>
         <p class="muted">Approval uses the clean application launch receipt. The worker starts its own isolated instance for validation.</p>
+        @if (job?.SharedBuild is { } shared) { <p class="notice">Uses shared application build @shared.BuildVersion from <a href="/case-implementations/@shared.OwnerJobId">this batch's build</a>. Validation hosts and data remain separate.</p> }
         @if (Test.Implementation is { } implementation)
-        { <p class="success-text">Verified automation is enabled.</p><p class="mini-label">Implementation @implementation.ResultCommit[..8] · @implementation.VerifiedAt.ToLocalTime().ToString("g")</p> }
+        { <p class="@(Test.Readiness == "ready" ? "success-text" : "notice")">@(Test.Readiness == "ready" ? "Verified automation is enabled." : "Automation needs reverification for the installed execution engine.")</p><p class="mini-label">Implementation @implementation.ResultCommit[..8] · @implementation.VerifiedAt.ToLocalTime().ToString("g")</p> }
         @if (job is { } current)
         {
             <div class="review-actions"><span class="badge @current.Status">@Home.Label(current.Status)</span><a href="/case-implementations/@current.Id">View implementation, plan and logs</a></div>
             @if (current.Error is { } failure) { <p role="alert" class="error-text preserve-lines">@failure</p> }
+            @if (CaseImplementationStates.Retryable(current.Status)) { <RetryCaseGeneration Job="current" Queued="OnRetryQueued" /> }
             @foreach (var item in events.TakeLast(3)) { <p class="quick-case-event"><span class="mini-label">@item.Stage</span>@item.Message</p> }
             @if (current.ValidationRunIds is { Count: > 0 } validations) { <div class="review-actions">@foreach (var id in validations) { <a href="/runs/@id">Validation run @id[..8]</a> }</div> }
             @if (current.Status == "queued" || CaseImplementationStates.Active(current.Status))
             { <p class="muted">Start or restart the local worker to load test implementation support. Progress refreshes here.</p><button class="secondary" disabled="@(!RendererInfo.IsInteractive || current.CancelRequested)" @onclick="Cancel">Cancel implementation</button> }
         }
-        @if (job is null || (job.Status != "queued" && !CaseImplementationStates.Active(job.Status)))
+        @if (job is null || job.Status == "verified" || (CaseImplementationStates.Retryable(job.Status) && job.DefinitionDigest != RunStore.DefinitionDigest(Test)))
         {
             <div class="review-actions"><button disabled="@(busy || !RendererInfo.IsInteractive)" @onclick="Approve">@(Test.Implementation is null ? "Approve and implement test case" : "Reverify test implementation")</button>
             @if (Test.Implementation is not null) { <button class="secondary" disabled="@(busy || !RendererInfo.IsInteractive)" @onclick="Disable">Disable test automation</button> }</div>
@@ -52,6 +54,7 @@
         catch (ArgumentException exception) { error = exception.Message; }
         finally { busy = false; }
     }
+    private async Task OnRetryQueued(CaseImplementationJob next) { job = next; error = notice = null; LoadEvents(); await Changed.InvokeAsync(); }
     private void Cancel() { try { if (job is not null) job = Store.CancelCaseJob(job.Id); error = null; notice = "Implementation cancellation requested."; } catch (ArgumentException exception) { error = exception.Message; } }
     private async Task Disable() { Store.DisableCase(Test.Id); notice = "Automation disabled. Implementation records and run evidence are retained."; await Changed.InvokeAsync(); }
 }

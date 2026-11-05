@@ -1,0 +1,47 @@
+@inject WorkerActivity Activity
+@using Getright.Dashboard.Components.Pages
+@inject LiveBrowser Browser
+@implements IAsyncDisposable
+
+<section class="panel worker-activity" aria-label="Worker activity">
+    <div class="worker-activity-heading"><div><span class="eyebrow">LOCAL WORKER</span><h2>@Heading</h2></div><span class="badge @(Connected ? "passed" : "pending")">@(Connected ? "Connected" : "Offline")</span></div>
+    @if (snapshot is { } current)
+    {
+        @foreach (var item in current.Active)
+        {
+            <div class="worker-work"><div><a href="@item.Url">@item.Title</a><p>@(item.Paused ? item.Stage + " · Continue in the dock, or cancel this test." : Home.Label(item.Stage))</p></div>
+                @if (item.Kind == "run") { <a class="button-link secondary" href="/runs/@item.Id/watch">@(item.Paused ? "Continue test" : "Watch test")</a> }
+            </div>
+        }
+        @if (current.Active.Count == 0) { <p class="muted">@(Connected ? "Ready to pick up the next queued test or job." : "Start scripts/start-worker.ps1 to process the queue.")</p> }
+        <p class="worker-queue">Waiting: <strong>@current.Queued.Runs tests</strong> · @current.Queued.Cases case implementations · @current.Queued.Improvements improvements · @current.Queued.Cleanup cleanup</p>
+        @if (current.Reviews.Count > 0)
+        {
+            <p class="muted">@current.Reviews.Count open browser reviews · Completed reviews do not block an updated worker. Each worker retains its three newest reviews.</p>
+            @foreach (var review in current.Reviews)
+            {
+                <div class="worker-review"><a href="/runs/@review.Id/watch">@review.Title <small>@review.Id[..8]</small></a><button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => Finish(review.Id)">Finish review</button></div>
+            }
+        }
+        @if (!Connected && current.Reviews.Count > 0) { <p class="notice">An older worker may still be holding a review. Finish it above, then restart the worker to enable independent reviews.</p> }
+    }
+    @if (error is not null) { <p class="error-text">@error</p> }
+</section>
+
+@code {
+    private WorkerOverview? snapshot;
+    private string? error;
+    private bool Connected => snapshot?.Workers.Any(w => w.Connected) == true;
+    private string Heading => snapshot?.Active.Any(w => w.Paused) == true ? "Waiting for your next step" : snapshot?.Active.Count > 0 ? "Work in progress" : Connected ? "Worker available" : "No worker connected";
+    private readonly CancellationTokenSource stop = new(); private Task? polling;
+    protected override void OnInitialized() { Refresh(); polling = Poll(); }
+    private void Refresh() => snapshot = Activity.Snapshot();
+    private void Finish(string id) { try { Browser.Close(id); error = null; Refresh(); } catch (ArgumentException e) { error = e.Message; } }
+    private async Task Poll()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        try { while (await timer.WaitForNextTickAsync(stop.Token)) await InvokeAsync(() => { Refresh(); StateHasChanged(); }); }
+        catch (OperationCanceledException) { }
+    }
+    public async ValueTask DisposeAsync() { await stop.CancelAsync(); if (polling is not null) await polling; stop.Dispose(); }
+}

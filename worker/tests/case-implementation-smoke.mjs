@@ -45,7 +45,7 @@ const adapters = test => ({ platformRepository: platform, implement: async ({ wo
 const approve = async test => {
   let browser;
   try {
-    browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(origin);
+    browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(origin+'/?view=generation');
     await page.getByRole('button', { name: test.title, exact: true }).click();
     await page.getByRole('button', { name: 'Approve and implement test case', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Test case implementation' })).toContainText('Case approved and queued');
@@ -72,10 +72,28 @@ try {
   for (const runId of verified.validationRunIds) { const run = await api(origin, `/api/runs/${runId}`); assert.equal(run.status, 'passed'); assert.equal(run.acceptance, 'pending'); assert.equal(run.steps.length, 2); assert.equal((await fetch(`${origin}/api/evidence/${run.trace}`)).status, 200); }
   const normal = await api(origin, '/api/runs', { testId: test.id }); assert.equal(await api(origin, '/api/worker/claim', {}), null, 'Legacy workers must not claim new workflows.');
   const result = await executeRun(await api(origin, '/api/worker/claim', { workflowEngineDigest }), configuration); assert.equal(result.id, normal.id); assert.equal(result.status, 'passed', result.error); assert.equal(result.acceptance, 'pending');
+  // A generated declarative workflow must use the same step gates as built-ins;
+  // its two implementation proofs above remain automatic.
+  const stepped = await api(origin, '/api/runs', { testId: test.id, docked: true, stepByStep: true }), steppedStop = new AbortController();
+  const steppedExecution = executeRun(await api(origin, '/api/worker/claim', { workflowEngineDigest, supportsStepControl: true }), { ...configuration, keepBrowserOpen: false, signal: steppedStop.signal });
+  try {
+    for (const step of test.steps) {
+      let state;
+      for (let index = 0; index < 150; index++) { state = await api(origin, `/api/runs/${stepped.id}/browser`); if (state.canAdvance && state.stepId === step.id) break; await delay(50); }
+      assert.equal(state.stepId, step.id); assert.equal(state.canAdvance, true);
+      await api(origin, `/api/runs/${stepped.id}/browser/advance`, { stepId: step.id });
+    }
+    const stepResult = await steppedExecution; assert.equal(stepResult.status, 'passed', stepResult.error); assert.equal(stepResult.acceptance, 'pending'); assert.equal(stepResult.steps.length, test.steps.length);
+  } finally { steppedStop.abort(new Error('Disposable declarative step check finished.')); await steppedExecution.catch(() => {}); }
   await api(origin, `/api/runs/${verified.validationRunIds[0]}/review`, { acceptance: 'accepted' });
   assert.equal((await api(origin, `/api/runs/${normal.id}`)).acceptance, 'pending');
+  const requeued = await api(origin, `/api/tests/${test.id}/approve-implementation`, { definitionDigest: queued.definitionDigest });
+  assert.equal(requeued.retainedPlan.binding.jobId, verified.id);
+  const reverified = await executeCaseImplementation(await claim(), configuration, { platformRepository: platform, implement: () => { throw new Error('Revalidation must not invoke a model for an unchanged verified plan.'); } });
+  assert.equal(reverified.status, 'verified', reverified.error); assert.equal(reverified.planJson, verified.planJson);
+  for (const id of reverified.validationRunIds) assert.equal((await api(origin, `/api/runs/${id}`)).acceptance, 'pending');
   browser = await chromium.launch({ headless: true }); const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  await page.goto(origin); await page.getByRole('button', { name: test.title, exact: true }).click();
+  await page.goto(origin+'/?view=generation'); await page.getByRole('button', { name: test.title, exact: true }).click();
   await expect(page.getByRole('region', { name: 'Test case implementation' })).toContainText('Verified automation is enabled');
   await page.screenshot({ path: path.join(dataPath, 'verified-case-desktop.png'), fullPage: true });
   await page.goto(`${origin}/case-implementations/${verified.id}`); await expect(page.getByRole('heading', { name: 'Committed workflow plan' })).toBeVisible();

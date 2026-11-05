@@ -1,0 +1,49 @@
+@inject RunStore Store
+@inject ApplicationSetup Setup
+
+@if (CaseImplementationStates.Retryable(Job.Status))
+{
+    <div class="case-generation-retry">
+        @if (latest is not null && latest.Id != Job.Id)
+        { <p><a href="/case-implementations/@latest.Id">View latest generation attempt</a></p> }
+        else
+        {
+            <button class="secondary" disabled="@(busy || definitionChanged || readiness?.Allowed == false || !RendererInfo.IsInteractive)" @onclick="Retry">@(busy ? "Queueing retry…" : "Retry case generation")</button>
+            @if (readiness is { Allowed: false } blocked)
+            { <p class="notice" role="status">@blocked.Message <a href="/case-implementations/@blocked.BlockedJobId">View prerequisite blocker</a></p> }
+            @if (definitionChanged) { <p class="notice">The case definition changed. <a href="/">Review and approve its current steps in the control room</a> before generating again.</p> }
+            <p class="muted">Retries only this case with the current clean application setup. Previous logs are retained; two fresh validations are required.</p>
+        }
+        @if (error is not null) { <p role="alert" class="error-text">@error</p> }
+        @if (queued is not null) { <p role="status">Retry queued. <a href="/case-implementations/@queued.Id">View new attempt</a>. The local worker will pick it up.</p> }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public CaseImplementationJob Job { get; set; } = null!;
+    [Parameter] public EventCallback<CaseImplementationJob> Queued { get; set; }
+    private CaseImplementationJob? latest, queued;
+    private CaseImplementationReadiness? readiness;
+    private string? error, displayedJobId;
+    private bool busy, definitionChanged;
+    protected override void OnParametersSet()
+    {
+        if (displayedJobId != Job.Id) { error = null; queued = null; displayedJobId = Job.Id; }
+        latest = Store.LatestCaseJobs([Job.TestId]).SingleOrDefault();
+        definitionChanged = RunStore.DefinitionDigest(Store.Test(Job.TestId)) != Job.DefinitionDigest;
+        readiness = Store.ImplementationReadiness(Job.TestId);
+    }
+    private async Task Retry()
+    {
+        if (busy) return;
+        busy = true; error = null;
+        try
+        {
+            queued = await Setup.RetryCase(Job.Id, new(Job.DefinitionDigest));
+            latest = queued;
+            await Queued.InvokeAsync(queued);
+        }
+        catch (ArgumentException exception) { error = exception.Message; }
+        finally { busy = false; }
+    }
+}

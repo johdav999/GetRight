@@ -3,6 +3,8 @@
 @inject UatCatalogue Catalogue
 @inject RunStore Store
 @inject ApplicationSetup Setup
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
 @implements IAsyncDisposable
 
 <PageTitle>Getright · Test control room</PageTitle>
@@ -15,20 +17,37 @@
     <div><span>Recent automated passes</span><strong>@runs.Count(r => r.Status == "passed")</strong></div>
     <div><span>Recent runs awaiting review</span><strong>@runs.Count(r => r.CompletedAt is not null && r.Acceptance == "pending")</strong></div>
 </div>
+<WorkerActivityPanel />
 <section class="panel suite-toolbar" aria-label="Test suite selection">
-    <div><label for="suite-filter">Test suite</label><select id="suite-filter" @bind="suiteId" @bind:after="SelectSuite" disabled="@(!RendererInfo.IsInteractive)"><option value="">All suites</option>@foreach (var suite in suites) { <option value="@suite.Id">@suite.Name (@suite.TestIds.Count @(suite.TestIds.Count == 1 ? "case" : "cases"))</option> }</select></div>
+    <div><label for="suite-filter">Test suite</label><select id="suite-filter" @bind="suiteId" @bind:after="SaveSuite" disabled="@(!preferencesLoaded)"><option value="">All suites</option>@foreach (var suite in suites) { <option value="@suite.Id">@suite.Name (@suite.TestIds.Count @(suite.TestIds.Count == 1 ? "case" : "cases"))</option> }</select></div>
     <div><a class="button-link secondary" href="/suites">Manage suites &amp; generate cases</a><p class="muted">@(suites.FirstOrDefault(s => s.Id == suiteId)?.Description ?? "Group test cases into suites, or describe a feature to generate draft cases.")</p></div>
 </section>
-<CaseGenerationProgress Tests="@VisibleTests.ToList()" />
+<nav class="control-room-views" aria-label="Control room views">
+    <a href="@ViewUrl(false)" aria-current="@(!generationView ? "page" : null)" aria-disabled="@(!RendererInfo.IsInteractive)" @onclick="() => ChangeView(false)" @onclick:preventDefault="true">Run &amp; review</a>
+    <a href="@ViewUrl(true)" aria-current="@(generationView ? "page" : null)" aria-disabled="@(!RendererInfo.IsInteractive)" @onclick="() => ChangeView(true)" @onclick:preventDefault="true">Test case generation</a>
+</nav>
+@if (generationView)
+{
+    <p class="muted">Approve draft cases, follow automation generation and retry unsuccessful attempts here. <a href="/suites">Describe a feature to generate new draft cases.</a></p>
+    <CaseGenerationProgress Tests="@VisibleTests.ToList()" Changed="Refresh" />
+}
+@if (!generationView)
+{
+    <div class="run-mode-choice">
+        <label for="run-execution-mode">Execution mode</label>
+        <select id="run-execution-mode" @bind="executionMode" @bind:after="SaveExecutionMode" disabled="@(!preferencesLoaded || queueing)"><option value="automatic">Run all steps automatically</option><option value="step">Step through one at a time</option></select>
+        <p class="muted">@(stepByStep ? "The dock pauses before each step. Use Run next step, or continue with all remaining steps." : "Run the complete workflow automatically, then review its result.")</p>
+    </div>
+}
 <div class="workspace-grid">
 <section class="panel catalogue">
-    <div class="panel-heading"><div><h2>Your test cases</h2><p>Automation and acceptance are tracked separately.</p></div><span class="counter">@VisibleTests.Count()</span></div>
+    <div class="panel-heading"><div><h2>@(generationView ? "Cases for generation" : "Your test cases")</h2><p>@(generationView ? "Review case definitions before implementing their automation." : "Automation and acceptance are tracked separately.")</p></div><span class="counter">@VisibleTests.Count()</span></div>
     <div class="filters" role="group" aria-label="Filter by application">
-        <button class="@(filter == "all" ? "filter selected" : "filter")" disabled="@(!RendererInfo.IsInteractive)" @onclick='() => SetFilter("all")'>All applications</button>
+        <button class="@(filter == "all" ? "filter selected" : "filter")" disabled="@(!preferencesLoaded)" @onclick='() => SetFilter("all")'>All applications</button>
         @foreach (var application in Catalogue.Value.Applications)
-        { <button class="@(filter == application.Id ? "filter selected" : "filter")" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => SetFilter(application.Id)">@application.Name</button> }
+        { <button class="@(filter == application.Id ? "filter selected" : "filter")" disabled="@(!preferencesLoaded)" @onclick="() => SetFilter(application.Id)">@application.Name</button> }
     </div>
-    <BulkCaseApproval Tests="@VisibleTests.ToList()" Changed="Refresh" />
+    @if (generationView) { <BulkCaseApproval Tests="@VisibleTests.ToList()" Changed="Refresh" /> }
     @foreach (var test in VisibleTests)
     {
         var latest = runs.FirstOrDefault(r => r.TestId == test.Id);
@@ -38,17 +57,22 @@
             <p>@test.Purpose</p>
             <div class="test-card-bottom"><div><span class="mini-label">AUTOMATED</span><span class="badge @(latest?.Status ?? "not-run")">@Label(latest?.Status ?? "not-run")</span></div><div><span class="mini-label">ACCEPTANCE</span><span class="badge @(latest?.Acceptance ?? "pending")">@Label(latest?.Acceptance ?? "pending")</span></div></div>
             <div class="test-card-actions">
-                @if (test.Readiness == "draft" || test.Implementation is not null) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => Select(test)">@(test.Implementation is null ? "Review draft" : "Review automation")</button> }
+                @if (test.Readiness == "draft" || test.Implementation is not null) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => ReviewAutomation(test)">@(test.Implementation is null ? "Review draft" : "Review automation")</button> }
+                @if (!generationView)
+                {
                 @if (CanRun(test)) { <TestPageButton TestId="@test.Id" Title="@test.Title" /> }
                 else { <button class="secondary open-test-page" disabled title="Configure a supported isolated test instance first">Open test page</button> }
-                <button class="run-button" disabled="@(!CanRun(test) || queueing || !RendererInfo.IsInteractive)" @onclick="() => Queue(test)">Run UAT test <span aria-hidden="true">↗</span></button>
+                <button class="run-button" disabled="@(!CanRun(test) || queueing || !preferencesLoaded)" @onclick="() => Queue(test)">@(stepByStep ? "Start step-by-step test" : "Run UAT test") <span aria-hidden="true">↗</span></button>
+                }
             </div>
         </article>
     }
 </section>
 <div class="detail-column">
-@if (selectedTest is { } implementTest && (implementTest.Readiness == "draft" || implementTest.Implementation is not null)) { <CaseImplementationPanel @key="(typeof(CaseImplementationPanel), implementTest.Id)" Test="implementTest" Changed="Refresh" /> }
+@if (generationView && selectedTest is { } implementTest && (implementTest.Readiness == "draft" || implementTest.Implementation is not null)) { <CaseImplementationPanel @key="(typeof(CaseImplementationPanel), implementTest.Id)" Test="implementTest" Changed="Refresh" /> }
+<div hidden="@generationView">
 @if (selectedTest is { } reviewTest) { <QuickRunReview @key="reviewTest.Id" LatestRun="@runs.FirstOrDefault(r => r.TestId == reviewTest.Id)" Changed="Refresh" /> }
+</div>
 <section class="panel detail" aria-label="Test details">
     @if (selectedTest is { } current)
     {
@@ -72,9 +96,19 @@
 </div>
 </div>
 <div class="setup-note"><strong>Start the local worker to execute queued tests and jobs.</strong><code>npm run start --prefix worker</code><span>Open feedback to prepare an editable Codex job. Implementation starts only after you request it.</span></div>
-@if (message is not null) { <div class="toast" role="status">@message <button @onclick="() => message = null" aria-label="Dismiss notification">×</button></div> }
+@if (message is not null) { <div class="toast" role="status">@message <button @onclick="DismissNotice" aria-label="Dismiss notification">×</button></div> }
 
 @code {
+    [SupplyParameterFromQuery(Name = "suite")] public string? RequestedSuite { get; set; }
+    [SupplyParameterFromQuery(Name = "view")] public string? RequestedView { get; set; }
+    // Use the current location during refresh/filter renders as well as route
+    // changes, so the displayed workspace always matches its deep link.
+    private bool generationView => Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(Navigation.ToAbsoluteUri(Navigation.Uri).Query)
+        .TryGetValue("view", out var view) && view.ToString() == "generation";
+    private string ViewUrl(bool generation) => Navigation.GetUriWithQueryParameter("view", generation ? "generation" : null);
+    private void ChangeView(bool generation) { if (RendererInfo.IsInteractive) Navigation.NavigateTo(ViewUrl(generation)); }
+    private void ReviewAutomation(UatTest test) { selectedTest = test; if (!generationView) ChangeView(true); }
+    private string? appliedSuiteQuery;
     private List<UatRun> runs = [];
     private List<UatTest> tests = [];
     private List<TestSuite> suites = [];
@@ -83,12 +117,42 @@
     private string suiteId = "";
     private IEnumerable<UatTest> VisibleTests => tests.Where(t => (filter == "all" || t.ApplicationId == filter) && (suiteId == "" || suites.FirstOrDefault(s => s.Id == suiteId)?.TestIds.Contains(t.Id) == true));
     private string? message;
+    private void DismissNotice() => message = null;
     private bool writerConfigured, companyConfigured, queueing;
+    private const string SuitePreference = "getright.control-room.suite";
+    private const string ModePreference = "getright.control-room.execution-mode";
+    private bool preferencesLoaded;
+    private string executionMode = "automatic";
+    private bool stepByStep => executionMode == "step";
     private readonly CancellationTokenSource stop = new();
     private Task? polling;
     protected override void OnInitialized()
     {
         Refresh(); polling = Poll();
+    }
+    protected override void OnParametersSet()
+    {
+        if (RequestedSuite == appliedSuiteQuery) return;
+        appliedSuiteQuery = RequestedSuite;
+        if (suites.Any(s => s.Id == RequestedSuite)) { suiteId = RequestedSuite!; SelectSuite(); }
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            var savedSuite = await JS.InvokeAsync<string?>("localStorage.getItem", SuitePreference);
+            var savedMode = await JS.InvokeAsync<string?>("localStorage.getItem", ModePreference);
+            if (!suites.Any(s => s.Id == RequestedSuite) && suites.Any(s => s.Id == savedSuite))
+            {
+                suiteId = savedSuite!;
+                SelectSuite();
+            }
+            if (savedMode is "automatic" or "step") executionMode = savedMode;
+        }
+        catch (JSException) { /* Browser storage may be disabled. Use this session's defaults. */ }
+        preferencesLoaded = true;
+        StateHasChanged();
     }
     private async Task Poll()
     {
@@ -98,8 +162,26 @@
     }
     private void Refresh() { tests = Store.Tests(); suites = Store.Suites(); runs = tests.SelectMany(t => Store.History(size: 12, test: t.Id).Items).OrderByDescending(r => r.CreatedAt).ToList(); writerConfigured = Store.Profile("writerapp") is not null; companyConfigured = Store.Profile("virtual-company") is not null; EnsureSelection(); }
     private void EnsureSelection() { selectedTest = VisibleTests.FirstOrDefault(t => t.Id == selectedTest?.Id) ?? VisibleTests.FirstOrDefault(); }
-    private void SetFilter(string application) { filter = application; suiteId = ""; EnsureSelection(); }
+    private async Task SetFilter(string application)
+    {
+        var hadSuite = suiteId.Length > 0;
+        filter = application;
+        suiteId = "";
+        EnsureSelection();
+        if (hadSuite) await SavePreference(SuitePreference, suiteId);
+    }
     private void SelectSuite() { if (suites.FirstOrDefault(s => s.Id == suiteId) is { } suite) filter = suite.ApplicationId; EnsureSelection(); }
+    private async Task SaveSuite()
+    {
+        SelectSuite();
+        await SavePreference(SuitePreference, suiteId);
+    }
+    private Task SaveExecutionMode() => SavePreference(ModePreference, executionMode);
+    private async Task SavePreference(string key, string value)
+    {
+        try { await JS.InvokeVoidAsync("localStorage.setItem", key, value); }
+        catch (JSException) { /* Keep the selection usable when storage is unavailable. */ }
+    }
     private bool CanRun(UatTest test)
     {
         if (test.Adapter == WorkflowContract.Adapter)
@@ -113,11 +195,15 @@
     }
     private void Select(UatTest test) => selectedTest = test;
     private string AppName(string id) => Catalogue.Value.Applications.First(a => a.Id == id).Name;
-    public static string Label(string value) => value switch { "not-run" => "Not run", "setup-required" => "Setup required", "awaiting-review" => "Awaiting review", "improvements-requested" => "Improvements requested", _ => char.ToUpperInvariant(value[0]) + value[1..] };
+    public static string Label(string value) => value switch { "not-run" => "Not run", "setup-required" => "Setup required", "reverification-required" => "Reverify required", "awaiting-review" => "Awaiting review", "improvements-requested" => "Improvements requested", _ => char.ToUpperInvariant(value[0]) + value[1..] };
     private async Task Queue(UatTest test)
     {
-        queueing = true;
-        try { var run = await Setup.Queue(test.Id); selectedTest = test; message = $"Run {run.Id[..8]} queued. The local worker will pick it up."; Refresh(); }
+        queueing = true; message = null;
+        try
+        {
+            var run = await Setup.Queue(test.Id, docked: true, stepByStep: stepByStep);
+            Navigation.NavigateTo($"/runs/{run.Id}/watch");
+        }
         catch (ArgumentException error) { message = error.Message; }
         finally { queueing = false; }
     }

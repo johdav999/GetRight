@@ -16,7 +16,7 @@ It includes:
 
 - A .NET 10 Blazor dashboard with application filters, readable test steps and run history.
 - SQLite persistence for test snapshots, results, review decisions and feedback.
-- A local Node.js / Playwright worker with a visible browser by default.
+- A local Node.js / Playwright worker with a live docked browser for control-room runs.
 - An isolated demo test that creates, saves and reopens a note, capturing step
   screenshots, a trace, fixture identity and the running assembly version.
 - Step-specific feedback, task previews and downloadable implementation prompts.
@@ -75,27 +75,66 @@ In another terminal, also at the repository root:
 ```
 
 The launcher reloads changed worker source or locked dependencies at the next idle
-queue boundary, after owned work and manual browser review finish. It never retries
+queue boundary, after executing work finishes. Reload closes retained review browsers
+while preserving their saved results. It never retries
 failed jobs automatically. `-Background` runs a hidden worker and prints its PID
 and log directory under `data/worker-hosts/`.
+An unsuccessful test implementation prints its recorded reason and details URL.
+Missing fixture/application prerequisites must be corrected before retrying;
+reinstalling Chromium only addresses a missing browser installation.
 
-For a dashboard upgrade with an unclaimed test-implementation queue, stop the
+For a dashboard upgrade with unclaimed tests or test-implementation jobs, stop the
 workers first, then use `./scripts/start-dashboard.ps1 -Restart -PreserveQueued
 -Background`. This explicit path preserves queued implementations and history;
-it refuses executing implementations, other active work or an incomplete queue
+it refuses executing tests/implementations, other active work or an incomplete queue
 inventory. Start the worker again after the dashboard is ready.
 
 Open [Getright on this computer](http://127.0.0.1:5120). Select **Run UAT test** on
-the Getright demo. The worker opens a browser, performs four repeatable steps and
-reports the result. Open its run history entry to inspect screenshots and download
-the trace. Accept the run, or choose a step and create an improvement task.
+the Getright demo. Getright opens a dedicated run page with the actual worker browser
+beside the case instructions and human acceptance. The demo performs four repeatable
+steps and reports the result. Open **Run details & evidence** to inspect screenshots
+and download the trace. Accept the run, or choose a step and create an improvement
+task. Installing Chromium with `npm run browsers`
+does not start the worker.
 
-Visible UAT runs leave the tested app open for manual review after saving their
-result and evidence. Close the test browser window when finished to let the worker
-continue its queue. Manual interaction after automation is outside the recorded
-run and does not change its result or acceptance. Ctrl+C stops the worker and its
-review browser. Headless runs and implementation-job regressions close automatically.
-Use `./scripts/start-worker.ps1 -AutoClose` for unattended visible runs.
+The dock shows the actual test session: watch while automation runs, then click,
+type and scroll in that same session after its result and evidence are saved.
+Its controls and detailed messages start collapsed under **Controls & status**.
+A compact status and the next-step action stay visible, giving the app
+most of the dock's height. Expand the drawer for navigation, extra step actions,
+full step instructions and Finish review. Click the app to type or paste directly.
+Completed reviews run independently: the worker can pick up the next test or job
+as soon as automation finishes. Use **Finish review** to close just that browser.
+Returning to the control room keeps the session alive. Resume it from
+**Worker activity** or **Watch test / continue review** in run details.
+**Undock** opens a standalone viewer of the same session without losing navigation
+or unsaved state. On narrow screens the tested app stacks above the case and review.
+**Worker activity** shows executing work, paused steps, queued counts
+and open reviews, with direct links and **Finish review** buttons. A step pause
+still occupies execution until you continue, cancel or reach its 15-minute bound.
+Each worker retains the three newest completed reviews; opening a fourth closes
+the oldest browser with a visible reason, without changing its saved evidence.
+
+Manual interaction is outside the recorded run and never changes its result,
+evidence or acceptance. The live session is temporary: stopping its worker or
+restarting the dashboard ends it; stored results remain available. Docked runs use
+a headless Chromium browser even with the worker's normal visible-browser setting.
+Use `./scripts/start-worker.ps1 -AutoClose` for unattended runs. Legacy API runs
+without docking retain their visible window independently until it closes; non-docked headless
+runs and implementation-job regressions close automatically.
+See [live browser docking](docs/live-browser.md) for the transport and lifecycle.
+
+Choose **Execution mode → Step through one at a time** before starting a test to
+pause before each catalogued step. Use **Run next step** in the live dock to
+execute that step and capture its evidence, or **Run remaining steps** to finish
+automatically in the same browser. The default **Run all steps automatically**
+keeps the existing behavior. **Run again** also lets you choose either mode.
+Fixture setup runs before the first pause. Click and type into the app while
+paused; input locks while a step executes. Manual interaction marks the run as
+assisted and is included in its trace. **Run next step** executes the automated
+actions and assertions; stepping does not accept individual steps or the run.
+Pauses have a 15-minute limit, keep the worker lease alive, and do not consume
+the normal automation time budget. Use **Cancel test** to stop a paused run.
 
 Each runnable case also has **Open test page**. It opens the configured running
 application's entry page in a left panel occupying half the window after checking
@@ -138,23 +177,52 @@ validations enable **Run UAT test** and **Open test page**. Human acceptance of
 application runs remains pending.
 
 Approval validates the isolated, clean source receipt without contacting its old
-manual-review instance. The worker builds and launches its own validation host.
+manual-review instance. The continuous worker prepares up to ten compatible queued
+case plans, builds their common application revision once, then validates each
+case in a fresh isolated host with its own data. Each case still needs two passing
+proof runs. Different source revisions/SDKs/build recipes use separate builds;
+new arrivals form the next batch. Progress/details identify the shared build and
+its compiler log. `-Once` retains single-case execution.
 Running a verified test or opening its manual test page still checks the configured
 running application's build and identity. Missing/dirty source receipts are rejected.
 New implementation builds require 5 GiB available on both their worktree and data
 volumes (256 MiB for the demo); low space fails before creating a worktree and never
 deletes history, evidence or source automatically.
 
-Use **Approve all pending test cases** above the cards to queue every pending
+Use **Approve all pending test cases** in **Test case generation** above the cards to queue every pending
 draft in the current application/suite filters at once. Choose **All applications**
 and **All suites** for all drafts. Already queued cases are skipped. The result
 lists each queued case or setup error; one blocked case does not stop the others.
 
-The **Test case generation progress** panel shows the latest automation attempt
+The control room opens on **Run & review**, with test cases, acceptance and feedback.
+Open its **Test case generation** tab for bulk approval, implementation details,
+retries and generation progress. Suite/application filters and the selected case
+are shared between tabs; unsaved review comments remain when switching views.
+**Review draft** and **Review automation** open the generation tab for that case.
+The view can be linked directly with `/?view=generation` and an optional `suite` query.
+
+The **Test case generation progress** panel in that tab shows the latest automation attempt
 for every approved case in the current filters. It refreshes every three seconds,
 with queue/active/verified/error counts, current stages and messages, validation
 results and links to implementation details. Finished counts include failures and
 cancellations; only enabled, verified automation is shown as ready to run.
+
+For a failed, interrupted or cancelled attempt, choose **Retry case generation**
+on its progress row, selected-case panel or implementation details page. This
+queues only that case, using the current clean application setup. Previous attempts,
+logs and evidence are retained. Duplicate clicks reuse the queued retry. If the
+case's steps changed, review and approve the updated case first. Fix any reported
+prerequisite before retrying; the worker still requires two fresh passing validations.
+
+Generation now checks the approved source and fixture prerequisites before building
+the application. **Prerequisites missing** means the case needs a supported fixture
+or application workflow; retrying unchanged setup cannot supply those capabilities.
+No UAT run is created by a blocked planning attempt.
+Known prerequisite blockers now disable retry and are excluded from bulk approval
+until the definition, approved source or fixture engine changes. The server enforces
+the same check, retaining the original blocker even behind later cancellations.
+Transient build/browser failures remain retryable. New missing-prerequisite outcomes
+are recorded as **Blocked**, separately from execution failures.
 
 The panel shows progress, cancellation, logs, errors and validation links. Missing
 fixture capabilities, unsupported actions and failed assertions leave the case
@@ -215,7 +283,7 @@ restricts profile writes, use the scripts for builds or set `DOTNET_CLI_HOME` an
 | `GETRIGHT_DASHBOARD_URL` | `http://127.0.0.1:5120` | Worker API origin; loopback HTTP only. |
 | `GETRIGHT_RUN_TIMEOUT_MS` | `180000` | Standalone run deadline, 1000–600000 ms. |
 | `GETRIGHT_HEADLESS` | unset / false | Set exactly `true` for headless execution. |
-| `GETRIGHT_KEEP_BROWSER_OPEN` | unset / true | Set exactly `false` to close visible UAT browsers after automation. |
+| `GETRIGHT_KEEP_BROWSER_OPEN` | unset / true | Set exactly `false` to close docked or visible UAT browsers after automation. |
 | `ASPNETCORE_URLS` | `http://127.0.0.1:5120` | Dashboard listening URL. Use a matching worker URL if changing the port. |
 
 Examples: `scripts/start-worker.ps1 -Headless`, or `-Once` to process at most one
@@ -242,10 +310,15 @@ npm run smoke:review --prefix worker
 npm run smoke:suites --prefix worker
 npm run smoke:quick-review --prefix worker
 npm run smoke:test-page-panel --prefix worker
+npm run smoke:live-dock --prefix worker
+npm run smoke:steps --prefix worker
 npm run smoke:startup --prefix worker
 npm run smoke:case-implementation --prefix worker
+npm run smoke:case-batch --prefix worker
 npm run smoke:bulk-approval --prefix worker
 npm run smoke:generation-progress --prefix worker
+npm run smoke:case-generation-retry --prefix worker
+npm run smoke:case-prerequisites --prefix worker
 npm run smoke:worker-launch --prefix worker
 ```
 
@@ -277,10 +350,14 @@ documentation belong there. No product license has been selected for this starte
 
 ## Virtual Company
 
-Start the dashboard, then run `./scripts/start-virtual-company.ps1`. The launcher
-builds a clean isolated instance and saves its receipt to application setup.
+Run `./scripts/start-virtual-company.ps1`. It starts Getright in the background if
+needed, or reuses the healthy dashboard without restarting it. It then builds a
+clean isolated Virtual Company instance and saves its receipt to application setup.
+The worker still starts separately with `./scripts/start-worker.ps1`.
 An observed native C# compiler crash (`Fatal error. 0xC0000005`) gets one bounded
 fresh-process build retry, with the original failure retained in the local log.
+This also recognizes MSBuild `MSB6006` when `csc.dll` exits with
+`-1073741819`, the signed form of the same access-violation status.
 Other build errors and cancellation stop immediately.
 The first workflow creates a test company, saves draft permissions and verifies
 reopening and access boundaries. See [Virtual Company UAT](docs/virtual-company-uat.md)

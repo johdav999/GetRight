@@ -1,5 +1,6 @@
 @page "/case-implementations/{Id}"
 @inject RunStore Store
+@inject NavigationManager Navigation
 @implements IAsyncDisposable
 
 <PageTitle>Test case implementation · Getright</PageTitle>
@@ -9,6 +10,9 @@ else
 {
     <header class="page-header"><div><p class="eyebrow">@current.ApplicationId · TEST AUTOMATION</p><h1>@current.TestSnapshot.Title</h1><p class="muted">Implementation @current.Id · approved @current.CreatedAt.ToLocalTime().ToString("g")</p></div><span class="badge @current.Status">@Home.Label(current.Status)</span></header>
     <p class="notice">This job implements a test case. It does not accept the application, merge changes or deploy anything. Validation runs retain their own pending human acceptance.</p>
+    @if (current.RetryOfJobId is { } previousId) { <p>Retry of <a href="/case-implementations/@previousId">previous generation attempt</a>. Its logs and evidence are retained.</p> }
+    @if (current.RetainedPlan is { } retained) { <p>Revalidation of the unchanged committed workflow from <a href="/case-implementations/@retained.Binding.JobId">the original verified implementation</a>. No new model invocation; two fresh validations are required.</p> }
+    @if (current.SharedBuild is { } shared) { <p class="notice">Batch @current.BatchId: shared application build <strong>@shared.BuildVersion</strong>, SDK @shared.SdkVersion. <a href="/case-implementations/@shared.OwnerJobId">Build owner and compiler log</a> · <a href="/api/case-implementations/@shared.OwnerJobId/artifacts/shared-build.json">Build attribution and artifact inventory</a>. This case uses its own fresh validation host and test data.</p> }
     <div class="workspace-grid">
     <section class="panel"><div class="panel-heading"><h2>Approved case</h2></div><div class="suite-form"><p>@current.TestSnapshot.Purpose</p><h3>Preconditions</h3><p class="preserve-lines">@current.TestSnapshot.Preconditions</p><ol class="steps">@foreach (var step in current.TestSnapshot.Steps) { <li><strong>@step.Title</strong><p>@step.Expected</p><span class="mini-label">@step.Id</span></li> }</ol><h3>Human review</h3><p>@current.TestSnapshot.ReviewQuestion</p>
         <dl class="metadata"><div><dt>Definition digest</dt><dd>@current.DefinitionDigest</dd></div><div><dt>Platform base</dt><dd>@current.PlatformBaseCommit</dd></div><div><dt>Result commit</dt><dd>@current.ResultCommit</dd></div><div><dt>Application source</dt><dd>@current.ApprovedTarget?.SourceCommit</dd></div><div><dt>Validation build</dt><dd>@current.ValidationTarget?.ExpectedBuildVersion</dd></div><div><dt>Engine digest</dt><dd>@current.EngineDigest</dd></div><div><dt>Codex thread</dt><dd>@current.ThreadId</dd></div><div><dt>Test worktree</dt><dd>@current.WorktreePath</dd></div><div><dt>Application worktree</dt><dd>@current.ApplicationWorktree</dd></div></dl>
@@ -17,6 +21,7 @@ else
     </div></section>
     <section class="panel"><div class="panel-heading"><h2>Implementation progress</h2></div><div class="suite-form">
         @if (current.Error is { } failure) { <p role="alert" class="error-text preserve-lines">@failure</p> }
+        @if (CaseImplementationStates.Retryable(current.Status)) { <RetryCaseGeneration Job="current" Queued="OnRetryQueued" /> }
         @if (current.Status == "queued" || CaseImplementationStates.Active(current.Status)) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || current.CancelRequested)" @onclick="Cancel">Cancel implementation</button> }
         @if (current.ValidationRunIds is { } validations) { <h3>Repeatability checks</h3>@foreach (var runId in validations) { var run = Store.Get(runId); <a class="history-row" href="/runs/@runId"><strong>@runId[..8]</strong><span class="badge @run.Status">@Home.Label(run.Status)</span><span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></a> } }
         <ol class="job-events">@foreach (var item in events) { <li><span class="mini-label">@item.CreatedAt.ToLocalTime().ToString("T") · @item.Stage</span><p>@item.Message</p></li> }</ol>
@@ -34,6 +39,7 @@ else
     protected override void OnParametersSet() { Load(); polling ??= Poll(); }
     private void Load() { try { job = Store.CaseJob(Id); if (eventJobId != Id) { events = []; eventJobId = Id; } events.AddRange(Store.CaseEvents(Id, events.LastOrDefault()?.Sequence ?? 0)); if (events.Count > 200) events.RemoveRange(0, events.Count - 200); error = null; } catch (ArgumentException exception) { error = exception.Message; } }
     private void Cancel() { if (job is not null) job = Store.CancelCaseJob(Id); }
+    private void OnRetryQueued(CaseImplementationJob next) => Navigation.NavigateTo($"/case-implementations/{next.Id}");
     private async Task Poll() { using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2)); try { while (await timer.WaitForNextTickAsync(stop.Token)) await InvokeAsync(() => { Load(); StateHasChanged(); }); } catch (OperationCanceledException) { } }
     public async ValueTask DisposeAsync() { await stop.CancelAsync(); if (polling is not null) await polling; stop.Dispose(); }
 }

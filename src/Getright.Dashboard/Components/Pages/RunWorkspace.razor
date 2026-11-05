@@ -1,0 +1,123 @@
+@page "/runs/{Id}/watch"
+@layout LiveRunLayout
+@inject RunStore Store
+@inject LiveBrowser Browser
+@implements IAsyncDisposable
+
+<PageTitle>Test run · Getright</PageTitle>
+@if (run is not { } current)
+{
+    <main class="run-workspace-unavailable"><a href="/">Back to test control room</a><h1>Run unavailable</h1><p role="alert">@error</p></main>
+}
+else
+{
+    <div class="run-workspace @(undocked ? "run-workspace-undocked" : "")" @key="current.Id">
+        @if (!undocked)
+        {
+            <aside class="test-page-panel" aria-label="Tested application">
+                <div class="test-page-toolbar">
+                    <div class="run-workspace-app"><RunIcon Name="browser" /><div><span class="eyebrow">TESTED APPLICATION</span><strong title="@current.TestSnapshot.Title">@current.TestSnapshot.Title</strong></div></div>
+                    <a class="button-link secondary run-icon-link" href="/runs/@current.Id/live" target="_blank" rel="noopener noreferrer" aria-label="Undock ↗" @onclick="() => undocked = true">Undock <RunIcon Name="external" /></a>
+                </div>
+                <LiveRunViewer RunId="@current.Id" />
+            </aside>
+        }
+        <main class="run-workspace-case">
+            <nav class="run-workspace-links" aria-label="Run navigation">
+                <a class="run-icon-link" href="/"><RunIcon Name="back" />Back to test control room</a>
+                <a class="run-icon-link run-evidence-link" href="/runs/@current.Id"><RunIcon Name="evidence" />Run details &amp; evidence</a>
+                @if (undocked) { <button class="secondary" @onclick="() => undocked = false">Dock browser</button> }
+            </nav>
+            <section class="panel run-workspace-overview" aria-label="Test case in this run">
+                <div class="run-overview-kicker">
+                    <span class="run-icon-tile"><RunIcon Name="steps" /></span>
+                    <span class="eyebrow">TEST CASE</span>
+                    <span class="run-mode-chip">@(current.StepByStep ? "Step by step" : "Automatic")</span>
+                </div>
+                <h1>@current.TestSnapshot.Title</h1>
+                <p class="run-overview-purpose">@current.TestSnapshot.Purpose</p>
+                @if (current.Status == "queued")
+                { <p class="muted">Waiting for the local worker. Check Worker activity in the control room if the run doesn’t start.</p> }
+                @if (current.Error is { } runError) { <p class="error-text" role="alert">@runError</p> }
+                @if (current.Status is "queued" or "running" && current.ImprovementJobId is null && current.CaseImplementationJobId is null)
+                { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || current.CancelRequested)" @onclick="Cancel">@(current.CancelRequested ? "Cancellation requested" : "Cancel run")</button> }
+                @if (error is not null) { <p class="error-text" role="alert">@error</p> }
+                @if (progress is { } step && step.StepIndex >= 0 && step.StepIndex < current.TestSnapshot.Steps.Count)
+                {
+                    <SelectedStepDescription Steps="current.TestSnapshot.Steps" StepId="@current.TestSnapshot.Steps[step.StepIndex].Id" RunId="@current.Id" Id="active-step-description" />
+                }
+                <details class="run-workspace-steps">
+                    <summary><RunIcon Name="steps" />All test steps (@current.TestSnapshot.Steps.Count)</summary>
+                    @if (current.TestSnapshot.Preconditions is { } preconditions)
+                    { <p class="preserve-lines">@preconditions</p> }
+                    <ol class="run-step-list">
+                        @foreach (var item in current.TestSnapshot.Steps)
+                        {
+                            var result = current.Steps.FirstOrDefault(result => result.StepId == item.Id);
+                            <li>
+                                <div>
+                                    <strong>@item.Title</strong>
+                                    @if (result is not null) { <span class="badge @result.Status">@Home.Label(result.Status)</span> }
+                                    <p>@item.Expected</p>
+                                </div>
+                            </li>
+                        }
+                    </ol>
+                </details>
+            </section>
+            <QuickRunReview LatestRun="current" Focused="true" StepProgress="progress" Changed="Load" />
+        </main>
+    </div>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+    private UatRun? run;
+    private BrowserStepProgress? progress;
+    private string? error;
+    private bool undocked;
+    private readonly CancellationTokenSource stop = new();
+    private Task? polling;
+
+    protected override void OnParametersSet()
+    {
+        if (run?.Id != Id) undocked = false;
+        Load();
+        polling ??= Poll();
+    }
+
+    private void Load()
+    {
+        try
+        {
+            run = Store.Get(Id);
+            progress = run.Status == "running" && run.StepByStep ? Browser.StepProgress(Id) : null;
+            error = null;
+        }
+        catch (ArgumentException exception) { run = null; progress = null; error = exception.Message; }
+    }
+
+    private void Cancel()
+    {
+        try { Store.CancelRun(Id); Load(); }
+        catch (ArgumentException exception) { error = exception.Message; }
+    }
+
+    private async Task Poll()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stop.Token))
+                await InvokeAsync(() => { if (run is not null) { Load(); StateHasChanged(); } });
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await stop.CancelAsync();
+        if (polling is not null) await polling;
+        stop.Dispose();
+    }
+}

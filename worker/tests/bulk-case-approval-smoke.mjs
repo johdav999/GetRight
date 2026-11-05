@@ -46,7 +46,7 @@ try {
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   const bulk = page.getByRole('region', { name: 'Bulk test case approval', exact: true });
   const approve = () => bulk.getByRole('button', { name: /^Approve all pending test cases/ });
-  await page.goto(origin); await page.getByRole('button', { name: a.title, exact: true }).click();
+  await page.goto(origin+'/?view=generation'); await page.getByRole('button', { name: a.title, exact: true }).click();
   await page.getByRole('button', { name: 'Approve and implement test case', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Test case implementation', exact: true })).toContainText('Case approved and queued');
   const [originalJob] = await jobs(); assert.equal(originalJob.testId, a.id);

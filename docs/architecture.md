@@ -56,10 +56,30 @@ Schema 6 adds test-implementation jobs/events and verified workflow bindings. An
 explicit approval freezes the case definition digest and clean application source
 receipt. Approval does not depend on the original manual-review host remaining
 online. Codex writes one bounded JSON artifact in a separate Getright worktree;
-the worker retains its base and resulting local commit. Fixed host adapters build
+source-only planning checks fixture prerequisites before any application build.
+Unsupported cases retain an actionable blocked explanation without starting a host.
+Planning shares the same leases, cancellation, active-work counts and recovery.
+Missing capabilities end in `blocked`, independently of execution failures. Queue
+and retry check prior blockers against the current definition digest, clean
+application source and installed workflow-engine digest before any paid work.
+Unchanged blockers stay disabled, including blockers hidden by later cancelled
+attempts. Legacy blocked failures retain their original rows and use their recorded
+worker summary for engine provenance. Changing only runtime metadata cannot add
+fixture capabilities. Source/engine changes permit fresh review and validation;
+they never enable the case automatically.
+The worker retains its base and resulting local commit. Fixed host adapters build
 the approved application revision in a separate worktree. Two validation runs
 must pass with distinct fixtures/resources on the verified fresh runtime before a
 binding is atomically enabled.
+The continuous worker can claim a bounded FIFO batch of up to ten cases with the
+same approved application revision. Each owns a private renewable lease and its
+own test-plan worktree/commit. It prepares all plans before grouping successful
+cases by source/SDK/build-recipe identity and compiling once per compatible group.
+The retained build inventory covers binaries, dependencies and source-mapped
+static assets; its digest and owner link are immutable job attribution. Every
+case uses a fresh sequential host/data root and two independent proof runs.
+Cancellation and errors remain per case; the shared compiler stops when no case
+still needs it. No persistent build cache or automatic artifact deletion exists.
 The binding freezes the raw plan digest, execution-engine digest, application
 source commit and proof runs. Normal queues require that source revision and a
 worker with the verified engine. Neither approval nor verification accepts an
@@ -83,22 +103,69 @@ failed run; they do not manufacture passing steps or human acceptance.
 `worker/src/launch.mjs` supervises the worker child. A startup source/dependency
 stamp is checked before each queue claim; changed source makes the idle child
 request a reload instead of continuing with cached modules. The supervisor only
-restarts that explicit reload exit, not ordinary failures. Active jobs and manual
-browser review finish first. Supervisor loss stops its child and owned operations.
+restarts that explicit reload exit, not ordinary failures. Active jobs finish first;
+retained reviews close on source reload without holding the queue indefinitely.
+Supervisor loss stops its child and owned operations.
 
 Normal dashboard restart refuses queued/active work. An explicit `-PreserveQueued`
 upgrade, with workers stopped, allows a complete inventory of unclaimed
-test-implementation jobs to survive a reload. Executing implementations and other
+standalone tests and test-implementation jobs to survive a reload. Executing work and other
 work still block it. This avoids making an old worker's unclaimed queue prevent
 the dashboard/worker upgrade required to service it.
 
-For standalone visible runs, tracing stops and the dashboard acknowledges the
-terminal result before manual review begins. The worker retains that browser and
-waits until its last page closes or the worker stops. Review has no active run
+The Virtual Company PowerShell launcher first calls the guarded dashboard launcher
+in background mode. It reuses a healthy matching instance or starts a stopped
+dashboard, refusing unrelated listeners and data-directory mismatches before
+application setup. The Node launcher's dashboard health check also reports an
+actionable startup error before configuration, worktree creation or compilation.
+
+For standalone runs, `run-sessions.mjs` forks an owned `run-child.mjs` process.
+The claim and bounded configuration cross private IPC, never command-line arguments.
+Tracing stops and the dashboard acknowledges the terminal result before manual
+review begins. A review-ready message releases the execution queue while that
+child retains its browser and transport. One test/job executes at a time; completed
+reviews are separate processes and cannot consume execution leases. Review has no active run
 lease or automation deadline; manual actions cannot change the stored result,
 evidence or acceptance. Headless runs, explicit auto-close mode and job-owned
 regressions close their browsers automatically. Job hosts retain their existing
-bounded lifecycle.
+bounded lifecycle. A worker retains at most three completed reviews, closing the
+oldest browser when a fourth completes. Finish review, capacity, worker stop and
+source reload affect live browsers only. Private owner heartbeats supplement IPC
+disconnect detection; abandoned run children close their browsers after owner loss.
+Each child's logs and diagnostic process identity stay under `data/run-workers/`.
+Crashes before completion are reported interrupted when the parent is available,
+or recover through the ordinary run lease. `--once` waits for its review before exit.
+
+Control-room **Run UAT test** and **Run again** instead request a docked run.
+The worker streams its actual headless Chromium session to the dashboard through
+outbound loopback requests, without a browser debugging port. Input is refused
+while automated actions execute. Once tracing stops and terminal completion is acknowledged,
+bounded input commands operate the same page for manual review. Docked sessions
+remain open even in headless mode unless auto-close is explicit. **Finish review**
+closes only that review browser; hiding or undocking the viewer
+does not close it. Frames, input queues and private session credentials are
+ephemeral and separate from immutable evidence. See [live browser docking](live-browser.md).
+
+Worker presence uses private ephemeral renewal tokens and four-second heartbeats.
+The public control-room status combines presence with authoritative queue counts,
+active stored runs/jobs and live step progress. It marks presence offline after
+15 seconds and lists retained reviews separately. Presence cannot claim work,
+change results or grant acceptance; missing telemetry never stops execution.
+
+Optional step-by-step execution freezes its mode on a standalone docked run and
+requires a step-capable worker claim. The same trusted runner pauses before each
+catalogued step, accepts an exact-step release, runs its actions/assertions and
+captures ordinary evidence before moving on. Server ordering prevents duplicate
+or stale UI requests from skipping steps. App input is available at pauses with
+a capable worker, and locks immediately on advance. Accepted input drains through
+acknowledged batches before automation resumes; worker input and release use the
+same serial lane. Commands target the exact paused step, so stale tabs cannot
+inject input into later steps. Requested manual interaction marks those steps as
+assisted in the stored run and feedback prompt; active tracing includes the actions.
+Human waits retain lease heartbeats, suspend only the active execution deadline,
+and have a separate 15-minute bound; cancellation/shutdown/recovery still apply.
+Implementation proofs and improvement-job regressions remain automatic. Engine
+attribution includes the deadline-supervision source as well as the runner.
 
 The running dashboard's assembly informational version identifies the demo build.
 .NET includes the source revision when building from a committed Git checkout.
@@ -141,8 +208,18 @@ Each new run starts pending. Review and feedback-induced decision changes append
 transactional audit events. History is paginated; Home displays the latest 12 runs
 per test. Metadata remains in SQLite after explicitly selected evidence cleanup.
 
+Review panels show the saved acceptance beside their controls and confirm saves
+before the feedback form. The current decision's action is disabled. Repeating
+the same decision through another tab or API is idempotent and adds no audit row;
+explicit decision changes still append history. Prior duplicate history is retained.
+
 The control room places a quick-review panel above Workflow detail. Its actions
 reuse the same review, feedback and improvement-job store methods as full review.
+The default **Run & review** view keeps case generation out of this workspace.
+Its **Test case generation** view contains progress, bulk approval and the
+selected case's implementation/retry controls. Switching views retains the case,
+suite/application filters and mounted review form, including unsaved comments.
+The generation view is directly addressable with `?view=generation`.
 The displayed run ID is pinned while newer runs arrive; switching is explicit and
 clears unsaved comment fields. Step choices come from that run's frozen snapshot.
 Inline task edits retain their revision and require reload on concurrent edits;

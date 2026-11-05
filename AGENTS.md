@@ -34,6 +34,15 @@ README.md and docs/architecture.md before changing the execution workflow.
 - Review both the dashboard flow and failure handling for execution changes.
 - Browser review: `npm run smoke:review --prefix worker` checks visible-browser
   retention after terminal completion, manual closing, shutdown and auto-close.
+- Live docking: `npm run smoke:live-dock --prefix worker` checks automatic Run UAT
+  docking, actual worker frames, input isolation during automation, same-session
+  manual review/undocking, immutable evidence, Finish review and failure handling.
+- Independent reviews: `npm run smoke:independent-reviews --prefix worker` checks
+  real worker/run-child queue progress with retained reviews, status, paused input,
+  bounded review capacity, shutdown and abrupt process/parent loss.
+- Step execution: `npm run smoke:steps --prefix worker` checks automatic/stepped
+  modes, exact-step grants, pause/reconnect/deadline handling, evidence, independent
+  acceptance, cancellation and shutdown with disposable browsers and no providers.
 - Suites and AI case proposals: `npm run smoke:suites --prefix worker` uses fake
   OpenAI credentials and loopback contract fixtures; generated cases stay drafts.
 - Control room quick review: `npm run smoke:quick-review --prefix worker` checks
@@ -42,6 +51,8 @@ README.md and docs/architecture.md before changing the execution workflow.
 - Windows launcher checks: `npm run smoke:startup --prefix worker` uses copied
   build outputs and disposable databases to verify repeat startup, explicit
   restart/stop, unrelated-port refusal and database ownership before recovery.
+  It also checks Virtual Company dashboard autostart/reuse before application
+  setup and actionable direct-Node errors when its dashboard is unavailable.
 
 - Virtual Company contracts: `npm run smoke:virtual-company --prefix worker`.
 - Real Virtual Company: `npm run smoke:virtual-company:live --prefix worker`; add
@@ -59,6 +70,16 @@ README.md and docs/architecture.md before changing the execution workflow.
   commits/worktrees and leave human acceptance pending.
   `npm run smoke:bulk-approval --prefix worker` checks filtered bulk approval,
   duplicate prevention and setup failures on disposable cases without running Codex.
+  `npm run smoke:case-generation-retry --prefix worker` checks individual retries,
+  duplicate requests, prior-attempt retention and setup/definition guards without Codex.
+  `npm run smoke:case-prerequisites --prefix worker` checks prerequisite-first
+  planning, blocked/unsafe output, build ordering, cancellation and lease recovery.
   `npm run smoke:worker-launch --prefix worker` exercises the supervised worker's
   actual empty/demo `--once` lifecycle without paid providers. Startup smoke also
   checks explicit queued-case preservation and refusal to interrupt executing work.
+- Shared case builds: `npm run smoke:case-batch --prefix worker` checks prepare-all,
+  compile-once batches, isolated sequential hosts/proofs, provenance, compatibility,
+  cancellation/shutdown and artifact-tamper refusal with synthetic compilers.
+  Opt-in `npm run smoke:case-batch:live --prefix worker` builds the configured clean
+  Virtual Company revision once for two retained permission plans, without a new
+  model call. Preserve worktrees, evidence and pending acceptance.

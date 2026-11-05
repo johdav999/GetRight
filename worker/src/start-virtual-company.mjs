@@ -10,10 +10,18 @@ import { requireBuildSpace } from './storage.mjs';
 
 const controller = new AbortController();
 for (const event of ['SIGINT', 'SIGTERM']) process.once(event, () => controller.abort(new Error('Local UAT instance stopped.')));
+async function start() {
 const id = randomUUID().replaceAll('-', '');
-const options = await jobConfiguration({}, 'virtual-company');
 const dashboardOrigin = process.env.GETRIGHT_DASHBOARD_URL ? localUrl(process.env.GETRIGHT_DASHBOARD_URL) : null;
-if (dashboardOrigin) await api(dashboardOrigin, '/api/health');
+if (dashboardOrigin) {
+  try {
+    const health = await api(dashboardOrigin, '/api/health');
+    if (health?.name !== 'Getright' || health.mode !== 'local' || !health.version) throw new Error('Unexpected dashboard health response.');
+  } catch {
+    throw new Error(`Cannot connect to a healthy local Getright dashboard at ${dashboardOrigin}. Start scripts/start-dashboard.ps1 -Background -Url ${dashboardOrigin}, then retry scripts/start-virtual-company.ps1. No Virtual Company worktree or host was created.`);
+  }
+}
+const options = await jobConfiguration({}, 'virtual-company');
 const root = path.join(repositoryRoot, 'data/virtual-company', id); await mkdir(root, { recursive: true });
 const hooks = path.join(root, 'empty-hooks'); await mkdir(hooks);
 const log = boundedLog(path.join(root, 'build.log'));
@@ -48,3 +56,8 @@ try {
   console.error(`Virtual Company UAT startup failed: ${error.message}\nFull local logs: ${root}`);
   process.exitCode = 1;
 } finally { await host?.stop(); }
+}
+await start().catch(error => {
+  console.error(`Virtual Company UAT startup failed: ${error.message}`);
+  process.exitCode = 1;
+});

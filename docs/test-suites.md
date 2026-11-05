@@ -9,6 +9,9 @@ cases. Cases may be included in more than one suite for the same application.
 The control room filters by application and suite. Selecting an application or
 suite also selects a visible case, keeping its detail and history consistent.
 The suite page supports creation, membership editing and feature-based generation.
+Use `/?suite=<suite-id>` to open the control room directly in one suite. Keep
+unsupported future scenarios in a separate backlog suite while using a supported
+suite for current UAT; moving suite membership preserves cases and run history.
 
 ## Open test page
 

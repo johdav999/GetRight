@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { chromium, expect } from '@playwright/test';
 import { api, repositoryRoot } from '../src/settings.mjs';
 import { dashboardHost } from './dashboard-host.mjs';
+import { workflowEngineDigest } from '../src/workflow-engine.mjs';
 
 const dataPath = path.join(repositoryRoot, '.local', `generation-progress-${Date.now()}`);
 const dashboard = await dashboardHost(dataPath), origin = dashboard.origin;
@@ -31,20 +32,29 @@ function validation(job, status) {
 }
 function enable(job) {
   const plan = JSON.stringify({ version: 1, fixture: 'getright-note', entryPath: '/uat-fixture.html?fixture={{fixtureId}}', reviewPath: '/uat-fixture.html', steps: [{ stepId: 'step-1', actions: [{ kind: 'expect-visible', selector: '#title' }] }] });
-  const binding = { jobId: job.id, definitionDigest: job.definitionDigest, planJson: plan, planDigest: createHash('sha256').update(plan).digest('hex'), engineDigest: 'a'.repeat(64),
+  const binding = { jobId: job.id, definitionDigest: job.definitionDigest, planJson: plan, planDigest: createHash('sha256').update(plan).digest('hex'), engineDigest: workflowEngineDigest,
     platformBaseCommit: 'a'.repeat(40), resultCommit: 'b'.repeat(40), applicationSourceCommit: null, validationRunIds: job.validationRunIds, verifiedAt: new Date().toISOString() };
   const connection = db(); connection.prepare('INSERT INTO case_bindings(test_id,job_id,payload) VALUES(?,?,?)').run(job.testId, job.id, JSON.stringify(binding)); connection.close();
 }
 const report = { scope: 'Generation progress UI with synthetic worker status fixtures; no execution/acceptance claims', flows: [], issues: [] };
-let browser;
+let browser, page;
 try {
-  browser = await chromium.launch({ headless: true }); const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
+  browser = await chromium.launch({ headless: true }); page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   const panel = page.getByRole('region', { name: 'Test case generation progress', exact: true });
-  await page.goto(origin); await expect(panel).toContainText('No test implementations yet in this view.');
+  await page.goto(origin);
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByRole('region', {name:'Bulk test case approval',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('region', {name:'Test case implementation',exact:true})).toHaveCount(0);
+  await page.getByRole('link', {name:'Test case generation',exact:true}).click();
+  await expect(panel).toContainText('No test implementations yet in this view.');
+  await expect(page.getByRole('region', {name:'Quick run review',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button', {name:/^Run UAT test/})).toHaveCount(0);
   const cases = ['Queued case', 'Active case', 'Failed case', 'Interrupted case', 'Cancelled case', 'Verified case', 'Disabled case', 'Retried case'].map(seed);
   await page.getByRole('button', { name: 'Refresh results', exact: true }).click();
+  await expect(panel).toBeVisible();
   await page.getByRole('button', { name: 'Getright demo', exact: true }).click();
+  await expect(panel).toBeVisible();
   await page.getByRole('button', { name: /^Approve all pending test cases/ }).click();
   await expect(page.getByRole('region', { name: 'Bulk test case approval', exact: true }).getByRole('status')).toContainText('8 queued');
   const approved = await api(origin, '/api/case-implementations');
@@ -74,8 +84,12 @@ try {
   await expect(row(cases[5])).toContainText('2/2 validations passed');
   await expect(row(cases[7]).getByRole('link', { name: cases[7].title, exact: true })).toHaveAttribute('href', `/case-implementations/${retry.id}`);
   report.flows.push({ id: 'PROGRESS-001', name: 'Rollup includes failed/cancelled outcomes without false readiness; latest jobs/events beyond history limits; disabled bindings and proof links', status: 'verified' });
+  patch(jobs[3], { status: 'blocked', error: 'Implementation blocked: Synthetic fixture capability is missing.' });
+  await expect(row(cases[3]).locator('.badge')).toHaveText('Prerequisites missing', { timeout: 10000 });
+  await expect(row(cases[3]).getByRole('button', { name: 'Retry case generation', exact: true })).toBeDisabled();
+  await expect(panel.locator('.generation-completion')).toHaveText('5 of 8 implementations finished · 1 ready to run');
 
-  for (const [stage, label] of [['building', 'Building'], ['implementing', 'Generating automation']]) {
+  for (const [stage, label] of [['planning', 'Checking prerequisites and generating automation'], ['building', 'Building'], ['implementing', 'Generating automation']]) {
     patch(jobs[1], { status: stage }, `Now ${stage}.`);
     await expect(row(cases[1]).locator('.badge')).toHaveText(label, { timeout: 10000 });
     await expect(row(cases[1])).toContainText(`Now ${stage}.`);
@@ -98,7 +112,28 @@ try {
   await expect(panel.locator('.generation-case')).toHaveCount(1);
   await page.getByRole('button', { name: 'Virtual Company', exact: true }).click(); await expect(panel).toContainText('No test implementations yet in this view.');
   await page.getByRole('button', { name: 'All applications', exact: true }).click(); await expect(panel.locator('.generation-case')).toHaveCount(8);
+  await page.goto(`${origin}/?suite=${suite.id}&view=generation`);
+  await expect(page.getByLabel('Test suite', { exact: true })).toHaveValue(suite.id);
+  await expect(panel.locator('.generation-case')).toHaveCount(1);
+  await page.getByRole('link', {name:'Run & review',exact:true}).click();
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByLabel('Test suite', {exact:true})).toHaveValue(suite.id);
+  const review=page.getByRole('region', {name:'Quick run review',exact:true});
+  await review.getByLabel('What needs improving?', {exact:true}).fill('Unsaved review survives a generation-tab visit.');
+  await page.getByRole('link', {name:'Test case generation',exact:true}).click();
+  await expect(panel.locator('.generation-case')).toHaveCount(1);
+  await page.getByRole('link', {name:'Run & review',exact:true}).click();
+  await expect(review.getByLabel('What needs improving?', {exact:true})).toHaveValue('Unsaved review survives a generation-tab visit.');
+  await page.getByRole('button', {name:'Review automation',exact:true}).click();
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole('region', {name:'Test case implementation',exact:true})).toContainText('Verified automation is enabled');
+  await expect(page.getByRole('region', {name:'Test details',exact:true}).getByRole('heading', {name:cases[5].title,exact:true})).toBeVisible();
+  await page.reload();
+  await expect(panel.locator('.generation-case')).toHaveCount(1);
   assert.deepEqual(await api(origin, '/api/runs'), beforeRuns); assert.deepEqual(errors, []);
   report.flows.push({ id: 'PROGRESS-002', name: 'Live preparing/building/generating/validating/verified transitions; suite/application scope; desktop/mobile and unchanged human acceptance', status: 'verified' });
   console.log(`PASS: live case generation progress, counts, stages, validation links, history limits, filters and mobile. Evidence: ${dataPath}`);
+} catch(error) {
+  if(page){await page.screenshot({path:path.join(dataPath,'failure.png'),fullPage:true}).catch(()=>{});console.error('Generation view failure:',page.url(),(await page.locator('body').innerText()).slice(0,2000));}
+  throw error;
 } finally { await browser?.close(); await dashboard.stop(); await writeFile(path.join(dataPath, 'progress-report.json'), JSON.stringify(report, null, 2)); }

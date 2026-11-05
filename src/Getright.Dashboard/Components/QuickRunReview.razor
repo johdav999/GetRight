@@ -1,16 +1,26 @@
 @using Getright.Dashboard.Components.Pages
 @inject RunStore Store
 
-<section class="panel quick-review" aria-label="Quick run review">
-    <div class="panel-heading"><div><span class="eyebrow">HUMAN ACCEPTANCE</span><h2>Review latest run</h2></div></div>
+<section class="panel quick-review" aria-label="@(Focused ? "Human acceptance" : "Quick run review")">
+    <div class="panel-heading">
+        @if (Focused) { <span class="run-icon-tile"><RunIcon Name="review" /></span> }
+        <div><span class="eyebrow">HUMAN ACCEPTANCE</span><h2>@(Focused ? "Review this run" : "Review latest run")</h2></div>
+    </div>
     <div class="quick-review-body">
     @if (reviewRun is not { } displayed)
     { <p class="muted">Run this test case to review its result and describe an improvement here.</p> }
     else
     {
-        <p class="quick-run-identity"><a href="/runs/@displayed.Id">Run @displayed.Id[..8]</a> · @displayed.CreatedAt.ToLocalTime().ToString("g")</p>
-        <p class="quick-run-build">Tested build: <strong>@(displayed.BuildVersion ?? "Not recorded yet")</strong></p>
-        <div class="quick-run-status"><span>Automated <span class="badge @displayed.Status">@Home.Label(displayed.Status)</span></span><span>Acceptance <span class="badge @displayed.Acceptance">@Home.Label(displayed.Acceptance)</span></span></div>
+        <div class="quick-run-meta">
+            <p class="quick-run-identity"><a href="/runs/@displayed.Id">Run @displayed.Id[..8]</a> · @displayed.CreatedAt.ToLocalTime().ToString("g")</p>
+            <p class="quick-run-build">Tested build: <strong>@(displayed.BuildVersion ?? "Not recorded yet")</strong></p>
+        </div>
+        <div class="quick-run-status">
+            <div><span class="run-status-label">@if (Focused) { <RunIcon Name="steps" /> } Automated@(Focused ? " result" : "")</span> <span class="badge @displayed.Status">@Home.Label(displayed.Status)</span></div>
+            <div><span class="run-status-label">@if (Focused) { <RunIcon Name="review" /> } @(Focused ? "Human acceptance" : "Acceptance")</span> <span class="badge @displayed.Acceptance">@Home.Label(displayed.Acceptance)</span></div>
+        </div>
+        @if (Focused) { <div class="run-review-question"><span class="mini-label">WHAT TO VERIFY</span><p>@displayed.TestSnapshot.ReviewQuestion</p></div> }
+        @if (displayed.AssistedSteps is { Count: > 0 }) { <p class="detail-note">Assisted run · Includes manual app interaction between steps, recorded in its trace.</p> }
         @if (LatestRun is { } latest && latest.Id != displayed.Id)
         {
             <div class="notice"><p>A newer run (@latest.Id[..8]) is available. Your review still belongs to run @displayed.Id[..8].</p>
@@ -18,16 +28,37 @@
                 <button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="UseLatest">Review latest run</button>
             </div>
         }
-        @if (displayed.Status is "queued" or "running") { <p class="muted">Review controls become available when this run finishes.</p> }
+        @if (displayed.Status is "queued" or "running")
+        {
+            <p class="muted @(Focused ? "run-review-wait" : "")">
+                @if (Focused && displayed.Status == "running" && !displayed.CancelRequested && StepProgress is { AwaitingAdvance: true } paused)
+                {
+                    var stepNumber = paused.StepIndex + 1;
+                    var count = displayed.TestSnapshot.Steps.Count;
+                    <text>Automation is paused before step @stepNumber of @count. In the browser viewer, select <strong>@(stepNumber == count ? "Run final step" : "Run next step")</strong> to run its automated checks.</text>
+                }
+                else if (Focused && StepProgress is { Stage: "passed" } last && last.StepIndex + 1 == displayed.TestSnapshot.Steps.Count)
+                {
+                    <text>The final step passed. Getright is saving the run results and evidence.</text>
+                }
+                else
+                {
+                    <text>Review controls become available when this run finishes.</text>
+                }
+            </p>
+        }
         <div class="review-actions">
-            <button disabled="@Disabled" @onclick='() => Review(displayed.Id, "accepted")'>Accept this run</button>
-            <button class="secondary" disabled="@Disabled" @onclick='() => Review(displayed.Id, "improvements-requested")'>Request improvements</button>
-            <button class="text-button" disabled="@Disabled" @onclick='() => Review(displayed.Id, "pending")'>Reset to pending</button>
+            <button class="@(Focused ? "run-icon-link" : null)" disabled="@(Disabled || displayed.Acceptance == "accepted")" @onclick='() => Review(displayed.Id, "accepted")'>@if (Focused) { <RunIcon Name="check" /> } @(displayed.Acceptance == "accepted" ? "Run accepted" : "Accept this run")</button>
+            <button class="secondary @(Focused ? "run-icon-link" : "")" disabled="@(Disabled || displayed.Acceptance == "improvements-requested")" @onclick='() => Review(displayed.Id, "improvements-requested")'>@if (Focused) { <RunIcon Name="comment" /> } Request improvements</button>
+            <button class="text-button" disabled="@(Disabled || displayed.Acceptance == "pending")" @onclick='() => Review(displayed.Id, "pending")'>Reset to pending</button>
         </div>
+        @if (notice is not null) { <p class="review-confirmation" role="status">@notice</p> }
+        @if (error is not null) { <p class="error-text" role="alert">@error</p> }
         <p class="muted">Your decision and comments apply only to this run.</p>
         <details class="quick-feedback-form" open>
             <summary>Comment or describe an improvement</summary>
-            <label for="quick-step">Test step</label><select id="quick-step" @bind="stepId" disabled="@Disabled">@foreach (var step in displayed.TestSnapshot.Steps) { <option value="@step.Id">@step.Title</option> }</select>
+            <label for="quick-step">Test step</label><select id="quick-step" @bind="stepId" disabled="@(!RendererInfo.IsInteractive)" aria-describedby="quick-step-description">@foreach (var step in displayed.TestSnapshot.Steps) { <option value="@step.Id">@step.Title</option> }</select>
+            <SelectedStepDescription Steps="displayed.TestSnapshot.Steps" StepId="@stepId" RunId="@displayed.Id" Id="quick-step-description" />
             <label for="quick-comment">What needs improving?</label><textarea id="quick-comment" @bind="comment" @bind:event="oninput" maxlength="8000" rows="3" disabled="@Disabled" placeholder="Describe what you saw and why it should change."></textarea>
             <label for="quick-outcome">Requested outcome</label><textarea id="quick-outcome" @bind="outcome" @bind:event="oninput" maxlength="8000" rows="2" disabled="@Disabled" placeholder="Describe the behavior you want."></textarea>
             <button disabled="@Disabled" @onclick="() => SaveFeedback(displayed.Id)">Create improvement task</button>
@@ -55,13 +86,13 @@
             </div>
         }
     }
-    @if (error is not null) { <p class="error-text" role="alert">@error</p> }
-    @if (notice is not null) { <p role="status">@notice</p> }
     </div>
 </section>
 
 @code {
     [Parameter] public UatRun? LatestRun { get; set; }
+    [Parameter] public bool Focused { get; set; }
+    [Parameter] public BrowserStepProgress? StepProgress { get; set; }
     [Parameter] public EventCallback Changed { get; set; }
     private UatRun? reviewRun;
     private Feedback? savedFeedback;
@@ -106,7 +137,7 @@
     }
     private async Task Review(string id, string acceptance)
     {
-        try { RequireRun(id); reviewRun = Store.Review(id, acceptance); error = null; notice = $"Review saved for run {id[..8]}."; await Changed.InvokeAsync(); }
+        try { RequireRun(id); reviewRun = Store.Review(id, acceptance); error = null; notice = $"Review saved: {Home.Label(acceptance)}. This decision applies to run {id[..8]}."; await Changed.InvokeAsync(); }
         catch (ArgumentException exception) { error = exception.Message; notice = null; }
     }
     private async Task SaveFeedback(string id)

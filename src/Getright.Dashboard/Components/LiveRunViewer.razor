@@ -1,0 +1,57 @@
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<section class="live-run-viewer" @ref="element" data-run-id="@RunId" aria-label="Live test browser">
+    <div class="live-browser-summary">
+        <span data-live-summary role="status">Connecting…</span>
+        <div class="live-step-primary" data-step-controls hidden><button data-action="next-step" disabled>Run next step</button></div>
+    </div>
+    <details class="live-browser-options" data-live-options>
+        <summary>Controls &amp; status</summary>
+        <div class="live-controls-body">
+            <div class="live-browser-controls">
+                <button class="secondary" data-command="back" disabled>Back</button>
+                <button class="secondary" data-command="forward" disabled>Forward</button>
+                <button class="secondary" data-command="reload" disabled>Reload</button>
+                <button class="secondary" data-action="zoom">Actual size</button>
+                <button data-action="finish" disabled>Finish review</button>
+                <a href="/runs/@RunId">Run details &amp; feedback</a>
+            </div>
+            <p class="test-page-note" data-live-status>Waiting for the worker’s browser…</p>
+            <div class="live-step-controls" data-step-options hidden>
+                <p data-step-status></p>
+                <div><button class="secondary" data-action="remaining-steps" disabled>Run remaining steps</button><button class="secondary" data-action="cancel-run" disabled>Cancel test</button></div>
+            </div>
+            <a class="test-page-note" data-earlier-review hidden target="_blank" rel="noopener noreferrer">Open an earlier browser review</a>
+        </div>
+    </details>
+    <p class="error-text" data-live-error role="alert" hidden></p>
+    <div class="live-browser-scroll">
+        <div class="live-browser-stage" tabindex="-1" role="application" aria-label="Test browser screen. Click to focus; Shift Escape releases the keyboard.">
+            <img alt="Live tested application" draggable="false" hidden />
+        </div>
+        <div class="run-browser-empty">
+            <span class="run-icon-tile"><RunIcon Name="browser" /></span>
+            <h2>Live browser unavailable</h2>
+            <p>Open the run details to see the recorded result and any saved evidence.</p>
+            <a class="button-link secondary run-icon-link" href="/runs/@RunId"><RunIcon Name="evidence" />Open run details</a>
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string RunId { get; set; } = "";
+    private ElementReference element;
+    private IJSObjectReference? module, viewer;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        module = await JS.InvokeAsync<IJSObjectReference>("import", "./live-run.js");
+        viewer = await module.InvokeAsync<IJSObjectReference>("attach", element, RunId);
+    }
+    public async ValueTask DisposeAsync()
+    {
+        try { if (viewer is not null) { await viewer.InvokeVoidAsync("dispose"); await viewer.DisposeAsync(); } if (module is not null) await module.DisposeAsync(); }
+        catch (JSDisconnectedException) { }
+    }
+}

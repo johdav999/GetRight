@@ -14,6 +14,8 @@ builder.Services.AddSingleton<UatCatalogue>();
 builder.Services.AddSingleton<DashboardInstance>();
 builder.Services.AddSingleton<RunStore>();
 builder.Services.AddSingleton<ApplicationSetup>();
+builder.Services.AddSingleton<LiveBrowser>();
+builder.Services.AddSingleton<WorkerActivity>();
 builder.Services.AddSingleton<CaseGeneration>();
 builder.Services.AddHostedService<LeaseMonitor>();
 var protection = builder.Services.AddDataProtection()
@@ -44,6 +46,9 @@ app.Use(async (context, next) =>
 app.UseAntiforgery();
 app.MapGet("/api/health", (DashboardInstance instance) => new { name = "Getright", version = AppJson.BuildVersion, mode = "local", instanceId = instance.Id, processId = Environment.ProcessId, dataPath = instance.DataPath });
 app.MapGet("/api/operations/active", (RunStore store) => store.ActiveWork());
+app.MapPost("/api/worker/presence/connect", (WorkerRegistration request, WorkerActivity workers) => workers.Connect(request));
+app.MapPost("/api/worker/presence/{id}", (string id, WorkerPulse request, WorkerActivity workers) => { workers.Pulse(id, request); return Results.NoContent(); });
+app.MapGet("/api/worker/status", (WorkerActivity workers) => workers.Snapshot());
 app.MapGet("/api/catalog", (UatCatalogue catalogue, RunStore store) => new Catalogue(catalogue.Value.Applications, store.Tests()));
 app.MapGet("/tests/{id}/open", TestPage.Open);
 app.MapGet("/api/suites", (RunStore store) => store.Suites());
@@ -56,7 +61,20 @@ app.MapGet("/api/suites/{id}/proposals", (string id, RunStore store) => store.Pr
 app.MapPost("/api/suites/{id}/proposals/{proposalId}/apply", (string id, string proposalId, ApplyCasesRequest request, RunStore store) => store.ApplyProposal(id, proposalId, request));
 app.MapGet("/api/runs", (RunStore store) => store.List());
 app.MapGet("/api/runs/{id}", (string id, RunStore store) => store.Get(id));
-app.MapPost("/api/runs", async (QueueRequest request, ApplicationSetup setup, CancellationToken cancellationToken) => Results.Created("/api/runs", await setup.Queue(request.TestId, cancellationToken)));
+app.MapPost("/api/runs", async (QueueRequest request, ApplicationSetup setup, CancellationToken cancellationToken) => Results.Created("/api/runs", await setup.Queue(request.TestId, cancellationToken, request.Docked, request.StepByStep)));
+app.MapPost("/api/runs/{id}/browser/connect", (string id, BrowserConnect request, LiveBrowser browser) => browser.Connect(id, request));
+app.MapPost("/api/runs/{id}/browser/frame", (string id, BrowserFrame request, LiveBrowser browser) => { browser.Frame(id, request); return Results.NoContent(); });
+app.MapPost("/api/runs/{id}/browser/poll", (string id, BrowserWorker request, LiveBrowser browser) => browser.Poll(id, request));
+app.MapPost("/api/runs/{id}/browser/end", (string id, BrowserWorker request, LiveBrowser browser) => { browser.End(id, request); return Results.NoContent(); });
+app.MapGet("/api/runs/{id}/browser", (string id, LiveBrowser browser) => browser.Status(id));
+app.MapGet("/api/runs/{id}/browser/frame", (string id, HttpContext context, LiveBrowser browser) => {
+    context.Response.Headers.CacheControl = "no-store";
+    return browser.Image(id) is { } bytes ? Results.File(bytes, "image/jpeg") : Results.NoContent();
+});
+app.MapPost("/api/runs/{id}/browser/input", (string id, BrowserInput input, LiveBrowser browser) => { browser.Input(id, input); return Results.NoContent(); });
+app.MapPost("/api/runs/{id}/browser/close", (string id, string? reason, LiveBrowser browser) => { browser.Close(id, reason); return Results.NoContent(); });
+app.MapPost("/api/runs/{id}/browser/step", (string id, BrowserStep request, LiveBrowser browser) => browser.Step(id, request));
+app.MapPost("/api/runs/{id}/browser/advance", (string id, BrowserAdvance request, LiveBrowser browser) => { browser.Advance(id, request); return Results.NoContent(); });
 app.MapGet("/api/applications/{id}/profile", (string id, RunStore store) => Results.Ok(store.Profile(id)));
 app.MapPost("/api/applications/{id}/profile", (string id, ApplicationProfile profile, RunStore store) =>
 {
@@ -64,12 +82,15 @@ app.MapPost("/api/applications/{id}/profile", (string id, ApplicationProfile pro
     return store.SaveProfile(profile);
 });
 app.MapGet("/api/applications/{id}/readiness", (string id, ApplicationSetup setup, CancellationToken cancellationToken) => setup.Check(id, cancellationToken));
-app.MapPost("/api/worker/claim", (WorkerClaimRequest? request, RunStore store) => store.Claim(request?.WorkflowEngineDigest) is { } lease ? Results.Ok(lease) : Results.NoContent());
+app.MapPost("/api/worker/claim", (WorkerClaimRequest? request, RunStore store) => store.Claim(request?.WorkflowEngineDigest, request?.SupportsStepControl ?? false) is { } lease ? Results.Ok(lease) : Results.NoContent());
 app.MapGet("/api/case-implementations", (string? test, RunStore store) => store.CaseJobs(test));
 app.MapGet("/api/case-implementations/{id}", (string id, RunStore store) => store.CaseJob(id));
 app.MapPost("/api/tests/{id}/approve-implementation", (string id, ApproveCaseRequest request, ApplicationSetup setup, CancellationToken cancellationToken) => setup.ApproveCase(id, request, cancellationToken));
+app.MapGet("/api/tests/{id}/implementation-readiness", (string id, RunStore store) => store.ImplementationReadiness(id));
+app.MapPost("/api/case-implementations/{id}/retry", (string id, ApproveCaseRequest request, ApplicationSetup setup, CancellationToken cancellationToken) => setup.RetryCase(id, request, cancellationToken));
 app.MapPost("/api/tests/{id}/disable-implementation", (string id, RunStore store) => store.DisableCase(id));
 app.MapPost("/api/worker/case-implementations/claim", (RunStore store) => store.ClaimCaseJob() is { } lease ? Results.Ok(lease) : Results.NoContent());
+app.MapPost("/api/worker/case-implementations/claim-batch", (RunStore store) => store.ClaimCaseBatch() is { } batch ? Results.Ok(batch) : Results.NoContent());
 app.MapPost("/api/case-implementations/{id}/heartbeat", (string id, JobLeaseRequest request, RunStore store) => store.HeartbeatCaseJob(id, request.Lease));
 app.MapPost("/api/case-implementations/{id}/report", (string id, CaseImplementationReport request, RunStore store) => store.ReportCaseJob(id, request));
 app.MapPost("/api/case-implementations/{id}/validate", (string id, CaseValidationRequest request, RunStore store) => store.CreateCaseValidation(id, request));
@@ -79,7 +100,7 @@ app.MapGet("/api/case-implementations/{id}/events", (string id, long? after, Run
 app.MapGet("/api/case-implementations/{id}/artifacts/{file}", (string id, string file, RunStore store) =>
 {
     _ = store.CaseJob(id);
-    if (file is not ("codex.log" or "build.log" or "summary.json" or "workflow.json")) return Results.NotFound();
+    if (file is not ("codex.log" or "build.log" or "summary.json" or "workflow.json" or "shared-build.json")) return Results.NotFound();
     var artifact = Path.Combine(store.DataPath, "case-implementations", id, file);
     return File.Exists(artifact) ? Results.File(artifact, file.EndsWith(".json") ? "application/json" : "text/plain", file) : Results.NotFound();
 });

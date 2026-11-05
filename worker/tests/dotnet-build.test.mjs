@@ -3,6 +3,23 @@ import test from 'node:test';
 import { dotnetBuild, nativeCompilerCrash } from '../src/dotnet-build.mjs';
 
 const crash = 'C:\\Program Files\\dotnet\\sdk\\9.0.317\\Roslyn\\Microsoft.CSharp.Core.targets(84,5): error : Fatal error. 0xC0000005 [VirtualCompany.Persistence.Migrations.History1.csproj]';
+const cscCrash = 'C:\\Program Files\\dotnet\\sdk\\9.0.317\\Roslyn\\Microsoft.CSharp.Core.targets(84,5): error MSB6006: "csc.dll" exited with code -1073741819. [VirtualCompany.Persistence.Migrations.History3.csproj]';
+test('Roslyn managed access-violation diagnostic receives the same bounded compiler recovery', async () => {
+  const managedCrash = crash.replace('0xC0000005', 'System.AccessViolationException: Attempted to read or write protected memory.');
+  let calls = 0;
+  await dotnetBuild(['build'], {}, async () => ++calls === 1 ? {code:1, output:managedCrash} : {code:0, output:'Build succeeded.'});
+  assert.equal(calls,2);
+  assert.equal(nativeCompilerCrash(managedCrash.replace('Microsoft.CSharp.Core.targets','Application.exe')),false);
+  assert.equal(nativeCompilerCrash(managedCrash.replace('error : Fatal error.','warning : Fatal error.')),false);
+});
+test('MSBuild csc.dll access-violation exit from the failed invoice generation gets one fresh-process retry', async () => {
+  let calls = 0; const logs = [];
+  await dotnetBuild(['build', 'Host.csproj'], { log: line => logs.push(line) }, async (_command, _args, options) => {
+    const output = ++calls === 1 ? cscCrash : 'Build succeeded.'; options.log(output); return { code: calls === 1 ? 1 : 0, output };
+  });
+  assert.equal(calls, 2); assert(logs.join('').includes(cscCrash));
+  for (const code of ['3221225477', '0xC0000005']) assert(nativeCompilerCrash(cscCrash.replace('-1073741819', code)));
+});
 test('Virtual Company build recovers once from the exact native compiler crash and retains its log', async () => {
   const calls = [], logs = [], args = ['build', 'Host.csproj', '--disable-build-servers', '-maxcpucount:1'];
   await dotnetBuild(args, { cwd: 'isolated', log: value => logs.push(value) }, async (command, actual, options) => {
@@ -13,7 +30,8 @@ test('Virtual Company build recovers once from the exact native compiler crash a
   assert(logs.join('').includes(crash)); assert.match(logs.join(''), /Retrying this build once/);
 });
 test('ordinary C# errors and application access violations do not trigger compiler recovery', async () => {
-  for (const output of ['file.cs(1,1): error CS0103: Missing symbol', 'Application.exe: Fatal error. 0xC0000005', 'Microsoft.CSharp.Core.targets: error : Out of memory.']) {
+  for (const output of ['file.cs(1,1): error CS0103: Missing symbol', 'Application.exe: Fatal error. 0xC0000005', 'Microsoft.CSharp.Core.targets: error : Out of memory.',
+    cscCrash.replace('-1073741819', '1'), cscCrash.replace('csc.dll', 'Application.exe'), 'Microsoft.CSharp.Core.targets: warning CS8602\nApplication.exe: error : Fatal error. 0xC0000005']) {
     let calls = 0; await assert.rejects(dotnetBuild(['build'], {}, async () => { calls++; return { code: 1, output }; }), /dotnet build exited/); assert.equal(calls, 1);
   }
   assert.equal(nativeCompilerCrash('warning CS8602: possibly null'), false);

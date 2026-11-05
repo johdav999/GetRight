@@ -3,6 +3,7 @@
 @inject UatCatalogue Catalogue
 @inject NavigationManager Navigation
 @inject ApplicationSetup Setup
+@inject LiveBrowser Browser
 @implements IAsyncDisposable
 
 <PageTitle>Run review · Getright</PageTitle>
@@ -12,15 +13,20 @@
 else
 {
     <header class="page-header"><div><p class="eyebrow">@Catalogue.Value.Applications.First(a => a.Id == run.ApplicationId).Name</p><h1>@run.TestSnapshot.Title</h1><p class="muted">Run @run.Id · @run.CreatedAt.ToLocalTime().ToString("g")</p></div><button class="secondary" @onclick="Load">Refresh run</button></header>
-    <div class="run-summary"><span>Automated result <span class="badge @run.Status">@Home.Label(run.Status)</span></span><span>User acceptance <span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></span></div>
+    <div class="run-summary"><span>Automated result <span class="badge @run.Status">@Home.Label(run.Status)</span></span><span>User acceptance <span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></span><span>Execution mode: @(run.StepByStep ? "Step by step" : "Automatic")</span></div>
+    @if (run.AssistedSteps is { Count: > 0 }) { <p class="detail-note">Assisted run · Manual interaction was requested before steps @string.Join(", ", run.AssistedSteps.Select(id => run.TestSnapshot.Steps.FindIndex(s => s.Id == id) + 1)). The trace includes these actions; this is not an unattended automation result.</p> }
     @if (run.ImprovementJobId is { } jobId) { <p class="notice">This is a regression run from <a href="/jobs/@jobId">improvement job @jobId[..8]</a>. <a href="/runs/@run.ParentRunId">View the original run</a>.</p> }
     @if (run.CaseImplementationJobId is { } caseJob) { <p class="notice">Validation run for <a href="/case-implementations/@caseJob">test implementation @caseJob[..8]</a>. Its automated result does not accept the application.</p> }
     @if (run.Status is "queued" or "running")
     { <div class="notice">@(run.Status == "queued" ? "Waiting for the local worker. Start it from the repository with npm run start --prefix worker." : "The browser test is running. Results refresh automatically.")</div> }
     <div class="review-actions">
     <TestPageButton TestId="@run.TestId" Title="@run.TestSnapshot.Title" />
+    @if (run.Docked) { <a class="button-link secondary" href="/runs/@run.Id/watch" data-enhance-nav="false">Watch test / continue review</a> }
     @if (run.Status is "queued" or "running" && run.ImprovementJobId is null && run.CaseImplementationJobId is null) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || run.CancelRequested)" @onclick="Cancel">Cancel run</button> }
-    @if (run.Status is not ("queued" or "running")) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || queueing)" @onclick="Again">Run again</button> }
+    @if (run.Status is not ("queued" or "running")) {
+        <div class="run-mode-choice"><label for="rerun-execution-mode">Execution mode for next run</label><select id="rerun-execution-mode" @bind="executionMode" disabled="@(!RendererInfo.IsInteractive || queueing)"><option value="automatic">Run all steps automatically</option><option value="step">Step through one at a time</option></select></div>
+        <button class="secondary" disabled="@(!RendererInfo.IsInteractive || queueing)" @onclick="Again">Run again</button>
+    }
     <a href="/history">Browse and compare runs</a>
     @if(run.ParentRunId is {} parent) { <a href="/compare?before=@parent&after=@run.Id">Compare with original</a> }
     </div>
@@ -32,24 +38,27 @@ else
     { <div class="run-summary"><span>Expected build: <strong>@target.ExpectedBuildVersion</strong></span><span>UAT account: <strong>@target.ExpectedUserId</strong></span><span>Evidence: <strong>@(run.Identity?.EvidenceKind ?? "Not verified yet")</strong></span><span>@(run.ApplicationId == "virtual-company" ? "Company" : "Document"): <strong>@(run.Identity?.CompanyId ?? run.Identity?.DocumentId ?? "Not created yet")</strong></span><span>Roles: <strong>@string.Join(", ", run.Identity?.Roles ?? [])</strong></span></div> }
     <div class="workspace-grid">
     <section class="panel"><div class="panel-heading"><h2>Step evidence</h2></div>
+        @if (run.StepByStep && run.Status == "running") { <p class="detail-note">Live step progress. Final screenshots and trace become available when the run finishes.</p> }
         @foreach (var step in run.TestSnapshot.Steps)
         {
             var result = run.Steps.FirstOrDefault(s => s.StepId == step.Id);
-            <article class="evidence-step"><div class="step-title"><h3>@step.Title</h3><span class="badge @(result?.Status ?? "not-run")">@Home.Label(result?.Status ?? "not-run")</span></div><p>@step.Expected</p>
+            var status = result?.Status ?? StepStatus(step.Id);
+            <article class="evidence-step"><div class="step-title"><h3>@step.Title</h3><span class="badge @status">@Home.Label(status)</span></div><p>@step.Expected</p>
                 @if (run.EvidenceRetiredAt is null && result?.Screenshot is { } shot) { <a href="/api/evidence/@shot" target="_blank"><img src="/api/evidence/@shot" alt="Screenshot for @step.Title" loading="lazy" /></a> }
                 @if (result?.Error is { } stepError) { <p class="error-text">@stepError</p> }
             </article>
         }
     </section>
-    <section class="panel review-panel"><div class="panel-heading"><h2>Your review</h2></div><p>@run.TestSnapshot.ReviewQuestion</p>
-        <div class="review-actions"><button disabled="@InProgress" @onclick='() => Review("accepted")'>Accept this run</button><button class="secondary" disabled="@InProgress" @onclick='() => Review("improvements-requested")'>Request improvements</button><button class="text-button" disabled="@InProgress" @onclick='() => Review("pending")'>Reset to pending</button></div>
+    <section class="panel review-panel" aria-label="Your review"><div class="panel-heading"><h2>Your review</h2><span class="badge @run.Acceptance" aria-label="Current acceptance">@Home.Label(run.Acceptance)</span></div><p>@run.TestSnapshot.ReviewQuestion</p>
+        <div class="review-actions"><button disabled="@(InProgress || run.Acceptance == "accepted")" @onclick='() => Review("accepted")'>@(run.Acceptance == "accepted" ? "Run accepted" : "Accept this run")</button><button class="secondary" disabled="@(InProgress || run.Acceptance == "improvements-requested")" @onclick='() => Review("improvements-requested")'>Request improvements</button><button class="text-button" disabled="@(InProgress || run.Acceptance == "pending")" @onclick='() => Review("pending")'>Reset to pending</button></div>
+        @if (notice is not null) { <p class="review-confirmation" role="status">@notice</p> }
+        @if (error is not null) { <p class="error-text" role="alert">@error</p> }
         <hr /><h3>Describe an improvement</h3><p class="muted">Attach feedback to an exact step and export a reproducible task.</p>
-        <label for="step">Test step</label><select id="step" @bind="stepId" disabled="@InProgress">@foreach (var step in run.TestSnapshot.Steps) { <option value="@step.Id">@step.Title</option> }</select>
+        <label for="step">Test step</label><select id="step" @bind="stepId" disabled="@(!RendererInfo.IsInteractive)" aria-describedby="step-description">@foreach (var step in run.TestSnapshot.Steps) { <option value="@step.Id">@step.Title</option> }</select>
+        <SelectedStepDescription Steps="run.TestSnapshot.Steps" StepId="@stepId" RunId="@run.Id" Id="step-description" />
         <label for="comment">What needs improving?</label><textarea id="comment" @bind="comment" maxlength="8000" rows="4" disabled="@InProgress" placeholder="Describe what you saw and why it was confusing."></textarea>
         <label for="outcome">Requested outcome</label><textarea id="outcome" @bind="outcome" maxlength="8000" rows="3" disabled="@InProgress" placeholder="Describe the behavior you want to see."></textarea>
         <button disabled="@InProgress" @onclick="SaveFeedback">Create improvement task</button>
-        @if (error is not null) { <p class="error-text" role="alert">@error</p> }
-        @if (notice is not null) { <p role="status">@notice</p> }
         @foreach (var feedback in feedbacks)
         { <article class="feedback" id="feedback-@feedback.Id"><span class="mini-label">@feedback.StepId · @feedback.CreatedAt.ToLocalTime().ToString("g")</span><p>@feedback.Comment</p><strong>@feedback.RequestedOutcome</strong><a href="/api/runs/@run.Id/tasks/@feedback.Id">Download task prompt</a><button class="secondary" disabled="@(!RendererInfo.IsInteractive)" @onclick="() => Prepare(feedback)">Prepare Codex job</button><details><summary>Preview task</summary><pre>@feedback.Prompt</pre></details></article> }
         @foreach (var job in linkedJobs) { <a class="history-row" href="/jobs/@job.Id"><strong>Improvement job @job.Id[..8]</strong><span class="badge @job.Status">@Home.Label(job.Status)</span></a> }
@@ -64,25 +73,35 @@ else
 @code {
     [Parameter] public string Id { get; set; } = "";
     private UatRun? run;
+    private BrowserStepProgress? stepProgress;
+    private string StepStatus(string id)
+    {
+        if (run is null || stepProgress is null) return "not-run";
+        var index = run.TestSnapshot.Steps.FindIndex(s => s.Id == id);
+        return index < stepProgress.StepIndex ? "passed" : index > stepProgress.StepIndex ? "not-run" : stepProgress.Stage == "waiting" ? "paused" : stepProgress.Stage;
+    }
     private List<Feedback> feedbacks = [];
     private List<ImprovementJob> linkedJobs = [];
     private string stepId = "", comment = "", outcome = "";
     private string? error, notice;
     private List<ReviewEvent> reviews = [];
     private bool moreReviews, queueing;
+    private string executionMode = "automatic";
+    private bool stepByStep => executionMode == "step";
+    private string? modeRunId;
     private readonly CancellationTokenSource stop = new();
     private Task? polling;
     private bool InProgress => !RendererInfo.IsInteractive || run?.Status is "queued" or "running";
     protected override void OnParametersSet() { stepId = ""; Load(); polling ??= Poll(); }
     private void Load()
     {
-        try { run = Store.Get(Id); feedbacks = Store.FeedbackFor(Id); linkedJobs = Store.JobsForRun(Id); reviews = Store.ReviewHistory(Id); moreReviews = reviews.Count == 50; if (stepId == "") stepId = run.TestSnapshot.Steps[0].Id; error = null; }
+        try { run = Store.Get(Id); stepProgress = run.StepByStep && run.Status == "running" ? Browser.StepProgress(Id) : null; if (modeRunId != run.Id) { modeRunId = run.Id; executionMode = run.StepByStep ? "step" : "automatic"; } feedbacks = Store.FeedbackFor(Id); linkedJobs = Store.JobsForRun(Id); reviews = Store.ReviewHistory(Id); moreReviews = reviews.Count == 50; if (stepId == "") stepId = run.TestSnapshot.Steps[0].Id; error = null; }
         catch (ArgumentException exception) { run = null; error = exception.Message; }
     }
     private void Review(string acceptance)
     {
-        try { Store.Review(Id, acceptance); Load(); notice = "Review saved for this run."; }
-        catch (ArgumentException exception) { error = exception.Message; }
+        try { Store.Review(Id, acceptance); Load(); notice = $"Review saved: {Home.Label(acceptance)}. This decision applies to run {Id[..8]}."; }
+        catch (ArgumentException exception) { notice = null; error = exception.Message; }
     }
     private void SaveFeedback()
     {
@@ -96,7 +115,7 @@ else
     }
     private void MoreReviews() { var next = Store.ReviewHistory(Id, reviews.LastOrDefault()?.Sequence ?? 0); reviews.AddRange(next); moreReviews = next.Count == 50; }
     private void Cancel() { try { run = Store.CancelRun(Id); } catch(ArgumentException exception) { error = exception.Message; } }
-    private async Task Again() { queueing = true; try { var fresh = await Setup.Queue(run!.TestId); Navigation.NavigateTo($"/runs/{fresh.Id}"); } catch(ArgumentException exception) { error = exception.Message; } finally { queueing = false; } }
+    private async Task Again() { queueing = true; try { var fresh = await Setup.Queue(run!.TestId, docked: true, stepByStep: stepByStep); Navigation.NavigateTo($"/runs/{fresh.Id}/watch"); } catch(ArgumentException exception) { error = exception.Message; } finally { queueing = false; } }
     private async Task Poll() {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
         try { while (await timer.WaitForNextTickAsync(stop.Token)) if(run?.Status is "running" or "queued") await InvokeAsync(() => { Load(); StateHasChanged(); }); }

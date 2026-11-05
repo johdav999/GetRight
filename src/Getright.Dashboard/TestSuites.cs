@@ -71,6 +71,7 @@ public sealed partial class RunStore
             while (reader.Read()) result.Add(JsonSerializer.Deserialize<UatTest>(reader.GetString(0), AppJson.Options)!);
             reader.Close();
             cmd.CommandText = "SELECT test_id,payload FROM case_bindings";
+            var currentEngine = WorkflowContract.LocalEngineDigest();
             using var bindings = cmd.ExecuteReader();
             while (bindings.Read())
             {
@@ -78,7 +79,7 @@ public sealed partial class RunStore
                 if (index < 0) continue;
                 var binding = JsonSerializer.Deserialize<WorkflowImplementation>(bindings.GetString(1), AppJson.Options)!;
                 if (DefinitionDigest(result[index]) == binding.DefinitionDigest)
-                    result[index] = result[index] with { Readiness = "ready", Adapter = "declarative-v1", Implementation = binding };
+                    result[index] = result[index] with { Readiness = currentEngine == binding.EngineDigest ? "ready" : "reverification-required", Adapter = "declarative-v1", Implementation = binding };
             }
             return result;
         }

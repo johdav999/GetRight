@@ -7,6 +7,7 @@ import { supervise } from './supervision.mjs';
 import { virtualCompanyAdapter } from './virtual-company.mjs';
 import { waitForBrowserReview } from './browser-review.mjs';
 import { workflowAdapter } from './workflow.mjs';
+import { liveBrowser } from './live-browser.mjs';
 
 // Adapter IDs are allowlisted in source. The API cannot submit executable code,
 // shell commands or arbitrary navigation targets to this local worker.
@@ -17,7 +18,7 @@ async function performRun(claim, configuration) {
   const directory = path.join(configuration.dataPath, 'evidence', run.id);
   await mkdir(directory, { recursive: true });
   const result = { lease, status: 'failed', buildVersion: null, baseUrl: configuration.dashboardUrl, steps: [], trace: null, error: null };
-  let browser, context, currentStep, adapter;
+  let browser, context, currentStep, adapter, dock;
   const abortBrowser = () => { void browser?.close().catch(() => {}); };
   const pageErrors = [];
   try {
@@ -31,13 +32,14 @@ async function performRun(claim, configuration) {
       if (health.name !== 'Getright' || !health.version) throw new Error('The running application did not identify its build.');
       result.buildVersion = health.version;
     }
-    browser = await chromium.launch({ headless: configuration.headless, slowMo: configuration.headless ? 0 : 200 });
+    browser = await chromium.launch({ headless: run.docked || configuration.headless, slowMo: run.docked || !configuration.headless ? 200 : 0 });
     configuration.signal?.addEventListener('abort', abortBrowser, { once: true });
     configuration.signal?.throwIfAborted();
     context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
     context.setDefaultTimeout(15_000);
     await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
     const page = await context.newPage();
+    if (run.docked) dock = await liveBrowser({ browser, context, page, run, lease, configuration });
     page.on('pageerror', error => pageErrors.push(error.message));
     const title = `UAT note ${run.id.slice(0, 8)}`;
     const body = `Saved fixture content for ${run.fixtureId}.`;
@@ -75,10 +77,12 @@ async function performRun(claim, configuration) {
       configuration.signal?.throwIfAborted();
       currentStep = step.id;
       if (!Object.hasOwn(actions, step.id)) throw new Error(`Unregistered adapter step: ${step.id}`);
+      await dock?.beforeStep(step);
       await actions[step.id]();
       if (pageErrors.length) throw new Error(pageErrors.join('\n'));
       const screenshot = `${run.id}/${step.id}.png`;
       await page.screenshot({ path: path.join(directory, `${step.id}.png`), fullPage: true });
+      await dock?.afterStep(step);
       result.steps.push({ stepId: step.id, status: 'passed', screenshot, error: null });
       currentStep = null;
     }
@@ -102,23 +106,24 @@ async function performRun(claim, configuration) {
     }
     // Stop recording before manual review. The browser is transferred to
     // executeRun only for a visible, non-interrupted interactive run.
-    if (configuration.headless || configuration.keepBrowserOpen === false || configuration.signal?.aborted || !context?.pages().length) {
+    if ((!run.docked && configuration.headless) || configuration.keepBrowserOpen === false || configuration.signal?.aborted || !context?.pages().length || (run.docked && !dock)) {
       await browser?.close().catch(() => {});
+      await dock?.stop(); dock = null;
       browser = null;
     }
     configuration.signal?.removeEventListener('abort', abortBrowser);
   }
-  return { result, browser };
+  return { result, browser, dock };
 }
 
 export async function executeRun(claim, configuration) {
   const route = `/api/runs/${claim.run.id}`;
-  let result, browser;
+  let result, browser, dock;
   const supervision = supervise({ configuration, heartbeat: `${route}/heartbeat`, lease: claim.lease,
     timeoutMs: configuration.runTimeoutMs ?? 180000, cancellation: true });
   try {
     await supervision.ready;
-    ({ result, browser } = await performRun(claim, { ...configuration, signal: supervision.signal }));
+    ({ result, browser, dock } = await performRun(claim, { ...configuration, signal: supervision.signal, pauseExecutionDeadline: supervision.pauseDeadline }));
   } catch (error) { result = { lease: claim.lease, status: 'failed', steps: [], error: error.message }; }
   finally { await supervision.stop(); }
   if (supervision.signal.aborted) {
@@ -133,10 +138,11 @@ export async function executeRun(claim, configuration) {
       throw new Error(`Could not acknowledge run completion; its lease will recover as interrupted. ${error.message}`);
     }
     if (browser && !supervision.signal.aborted && !configuration.signal?.aborted && ['passed', 'failed'].includes(completed.status)) {
-      console.log(`Result: ${completed.status}. Human acceptance: ${completed.acceptance}.\nBrowser open for review: ${configuration.dashboardUrl}${route.replace('/api', '')}\nClose the test browser window to continue the worker queue. Manual changes are outside the recorded run.`);
+      dock?.review();
+      console.log(`Result: ${completed.status}. Human acceptance: ${completed.acceptance}.\nBrowser open for review: ${configuration.dashboardUrl}${route.replace('/api', '')}\n${dock ? 'Use Finish review in the docked browser to continue the worker queue.' : 'Close the test browser window to continue the worker queue.'} Manual changes are outside the recorded run.`);
       await waitForBrowserReview(browser, { signal: configuration.signal,
         onReady: () => configuration.onReviewReady?.({ browser, run: completed }) });
     }
     return completed;
-  } finally { await browser?.close().catch(() => {}); }
+  } finally { await dock?.stop(); await browser?.close().catch(() => {}); }
 }

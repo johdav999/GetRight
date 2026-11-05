@@ -1,0 +1,17 @@
+@if (Selected is { } step)
+{
+    <div id="@Id" class="selected-step-description" role="region" aria-label="Selected test step" data-selected-step-description="server" data-step-id="@step.Id" data-run-id="@RunId">
+        <span class="mini-label">Step @(Steps.ToList().FindIndex(s => s.Id == step.Id) + 1) of @Steps.Count</span>
+        <p class="selected-step-instruction">@step.Title</p>
+        <span class="mini-label">Expected result</span>
+        <p class="selected-step-expected">@step.Expected</p>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<TestStep> Steps { get; set; } = [];
+    [Parameter, EditorRequired] public string StepId { get; set; } = "";
+    [Parameter, EditorRequired] public string RunId { get; set; } = "";
+    [Parameter, EditorRequired] public string Id { get; set; } = "";
+    private TestStep? Selected => Steps.FirstOrDefault(step => step.Id == StepId);
+}

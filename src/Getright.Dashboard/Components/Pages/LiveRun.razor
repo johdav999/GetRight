@@ -1,0 +1,8 @@
+@page "/runs/{Id}/live"
+@layout LiveRunLayout
+
+<PageTitle>Live UAT browser · Getright</PageTitle>
+<header class="live-window-heading"><strong>Getright · Live UAT browser</strong><a href="/runs/@Id/watch">Test case &amp; human acceptance</a></header>
+<LiveRunViewer @key="Id" RunId="@Id" />
+
+@code { [Parameter] public string Id { get; set; } = ""; }

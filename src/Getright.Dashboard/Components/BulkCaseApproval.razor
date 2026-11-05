@@ -9,6 +9,7 @@
     </div>
     <p class="muted">Approve draft cases in the current application and suite filters for Codex implementation. Each case still needs two passing validations; run acceptance stays separate.</p>
     @if (activeCount > 0) { <p class="muted">@activeCount @(activeCount == 1 ? "case is" : "cases are") already queued or being implemented.</p> }
+    @if (blockedCount > 0) { <p class="notice">@blockedCount @(blockedCount == 1 ? "case has" : "cases have") unchanged prerequisite blockers and will not be queued again. Review the blocker in generation progress before retrying.</p> }
     @if (summary is not null) { <p role="status">@summary</p> }
     @if (results.Count > 0)
     {
@@ -23,7 +24,7 @@
     [Parameter] public EventCallback Changed { get; set; }
     private List<UatTest> pending = [];
     private List<ApprovalResult> results = [];
-    private int activeCount;
+    private int activeCount, blockedCount;
     private bool busy, disposed;
     private string? summary;
     private CancellationTokenSource? batchStop;
@@ -31,10 +32,11 @@
     protected override void OnParametersSet() => LoadPending();
     private void LoadPending()
     {
-        pending = []; activeCount = 0;
+        pending = []; activeCount = blockedCount = 0;
         foreach (var test in Tests.Where(t => t.Readiness == "draft"))
         {
             if (Store.CaseJobs(test.Id).Any(j => j.Status == "queued" || CaseImplementationStates.Active(j.Status))) activeCount++;
+            else if (!Store.ImplementationReadiness(test.Id).Allowed) blockedCount++;
             else pending.Add(test);
         }
     }

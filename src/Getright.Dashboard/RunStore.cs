@@ -139,10 +139,11 @@ public sealed partial class RunStore
         cmd.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(run, AppJson.Options));
         cmd.Parameters.AddWithValue("$lease", (object?)lease ?? DBNull.Value); cmd.Parameters.AddWithValue("$expires", (object?)expires?.ToString("O") ?? DBNull.Value); cmd.ExecuteNonQuery();
     }
-    public UatRun Queue(string testId, ApplicationProfile? target = null)
+    public UatRun Queue(string testId, ApplicationProfile? target = null, bool docked = false, bool stepByStep = false)
     {
         lock (gate)
         {
+            if (stepByStep && !docked) throw new ArgumentException("Step-by-step runs require the docked browser.");
             var test = Test(testId);
             var demo = test.ApplicationId == "getright" && test.Adapter is "getright-save-note" or WorkflowContract.Adapter && test.Readiness == "ready";
             var targeted = ApplicationSetup.Supported(test.ApplicationId, test.Adapter) && target?.ApplicationId == test.ApplicationId;
@@ -152,17 +153,18 @@ public sealed partial class RunStore
             ApplicationSetup.ValidateWorkflowTarget(test, target);
             var id = Guid.NewGuid().ToString("N");
             var run = new UatRun(id, test.Id, test.ApplicationId, "queued", "pending",
-                DateTimeOffset.UtcNow, null, null, $"uat-{id}", null, null, [], null, null, test, targeted ? target : null);
+                DateTimeOffset.UtcNow, null, null, $"uat-{id}", null, null, [], null, null, test, targeted ? target : null, Docked: docked, StepByStep: stepByStep);
             Save(run); return run;
         }
     }
-    public RunLease? Claim(string? workflowEngineDigest = null)
+    public RunLease? Claim(string? workflowEngineDigest = null, bool supportsStepControl = false)
     {
         lock (gate)
         {
             Sweep();
             using var db = Open(); using var cmd = db.CreateCommand();
-            cmd.CommandText = "SELECT payload FROM runs WHERE json_extract(payload,'$.status')='queued' AND (COALESCE(json_extract(payload,'$.testSnapshot.adapter'),'') != 'declarative-v1' OR $engine IS NOT NULL) ORDER BY rowid LIMIT 1";
+            cmd.CommandText = "SELECT payload FROM runs WHERE json_extract(payload,'$.status')='queued' AND (COALESCE(json_extract(payload,'$.testSnapshot.adapter'),'') != 'declarative-v1' OR $engine IS NOT NULL) AND (COALESCE(json_extract(payload,'$.stepByStep'),0)=0 OR $steps=1) ORDER BY rowid LIMIT 1";
+            cmd.Parameters.AddWithValue("$steps", supportsStepControl ? 1 : 0);
             cmd.Parameters.AddWithValue("$engine", WorkflowContract.Digest(workflowEngineDigest) ? workflowEngineDigest : DBNull.Value);
             var run = cmd.ExecuteScalar() is string payload ? JsonSerializer.Deserialize<UatRun>(payload, AppJson.Options) : null;
             if (run is null) return null;
@@ -232,6 +234,7 @@ public sealed partial class RunStore
             if (acceptance is not ("accepted" or "improvements-requested" or "pending"))
                 throw new ArgumentException("Invalid review status.");
             EnsureNoEvidenceCleanup(id);
+            if (run.Acceptance == acceptance) return run;
             using var db = Open(); using var transaction = db.BeginTransaction();
             using var cmd = db.CreateCommand(); cmd.Transaction = transaction;
             cmd.CommandText = "UPDATE runs SET payload=$payload WHERE id=$id";
@@ -267,6 +270,7 @@ public sealed partial class RunStore
             var prompt = new StringBuilder()
                 .AppendLine($"Application: {run.ApplicationId}\nTest: {run.TestSnapshot.Title} ({run.TestId})")
                 .AppendLine($"Run: {run.Id}\nTested build: {run.BuildVersion ?? "unavailable"}\nEnvironment: {run.BaseUrl ?? "unavailable"}")
+                .AppendLine($"Execution: {(run.StepByStep ? "step by step" : "automatic")}{(run.AssistedSteps is { Count: > 0 } ? $"; manual interaction requested before steps {string.Join(", ", run.AssistedSteps)} (see trace)" : "")}")
                 .AppendLine($"Fixture: {run.FixtureId}\nStep: {step.Title} ({step.Id})\nExpected: {step.Expected}")
                 .AppendLine($"Evidence scope: {run.Identity?.EvidenceKind ?? (run.ApplicationId == "getright" ? "demo" : "unverified")}\nTest account: {run.Identity?.UserId ?? "unavailable"}\nDocument: {run.Identity?.DocumentId ?? "unavailable"}\nCompany: {run.Identity?.CompanyId ?? "unavailable"}\nIsolation reference company: {run.Identity?.IsolationCompanyId ?? "unavailable"}")
                 .AppendLine($"Source revision from build receipt: {run.Target?.SourceCommit ?? "not supplied"}\nSource had local changes: {(run.Target?.SourceCommit is null ? "not recorded" : run.Target.SourceWasDirty.ToString())}")

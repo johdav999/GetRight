@@ -68,16 +68,25 @@ function Stop-GetrightInstance {
     }
     if ($null -eq $taskActive.runs -or $null -eq $taskActive.jobs -or $null -eq $taskActive.cleanup) { throw 'Cannot verify active work. No process was stopped.' }
     if ($taskActive.runs -or $taskActive.jobs -or $taskActive.cleanup -or $taskActive.caseImplementations) {
-        if (-not $PreserveQueued -or $taskActive.runs -or $taskActive.jobs -or $taskActive.cleanup) { throw 'Getright has queued or running work. Complete or cancel it in the dashboard before restarting or stopping.' }
-        # This explicit upgrade path is for a stopped worker with an unclaimed
-        # implementation queue. Prove the complete count, not just a recent page.
+        if (-not $PreserveQueued -or $taskActive.jobs -or $taskActive.cleanup) { throw 'Getright has queued or running work. Complete or cancel it in the dashboard before restarting or stopping.' }
+        # Stop queue consumers before preserving a complete unclaimed inventory.
+        $taskWorkerPattern = [regex]::Escape($Settings.Root) + '[\\/]worker[\\/]src[\\/](index|launch|run-child)\.mjs'
+        $taskWorkers = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match $taskWorkerPattern })
+        if ($taskWorkers.Count) { throw 'Stop this checkout''s workers before preserving queued work. No dashboard process was stopped.' }
+        $taskRuns = Invoke-RestMethod -Uri ($Settings.Url + '/api/runs') -TimeoutSec 3 -MaximumRedirection 0
+        $taskRuns = @($taskRuns)
+        $taskPendingRuns = @($taskRuns | Where-Object { $_.status -in @('queued','running') })
+        if ($taskPendingRuns.Count -ne $taskActive.runs -or @($taskPendingRuns | Where-Object { $_.status -ne 'queued' -or $_.improvementJobId -or $_.caseImplementationJobId }).Count) {
+            throw 'Getright has queued or running work that cannot be preserved safely. Only fully inventoried, unclaimed standalone tests can be reloaded.'
+        }
         $taskCases = Invoke-RestMethod -Uri ($Settings.Url + '/api/case-implementations') -TimeoutSec 3 -MaximumRedirection 0
         $taskCases = @($taskCases)
-        $taskPending = @($taskCases | Where-Object { $_.status -eq 'queued' -or $_.status -in @('preparing','building','implementing','validating') })
+        $taskPending = @($taskCases | Where-Object { $_.status -eq 'queued' -or $_.status -in @('preparing','planning','building','implementing','validating') })
         if ($taskPending.Count -ne $taskActive.caseImplementations -or @($taskPending | Where-Object { $_.status -ne 'queued' }).Count) {
             throw 'Getright has queued or running work that cannot be preserved safely. Only a fully verified, unclaimed implementation queue can be reloaded.'
         }
         Write-Output "Preserving $($taskPending.Count) queued test implementations. Workers must remain stopped until the dashboard is ready."
+        if ($taskPendingRuns.Count) { Write-Output "Preserving $($taskPendingRuns.Count) queued UAT tests with their existing run IDs." }
     }
     $taskCurrent = Get-GetrightHealth $Settings
     if (-not $taskCurrent -or $taskCurrent.instanceId -ne $Health.instanceId -or $taskCurrent.processId -ne $Health.processId) { throw 'The dashboard changed during the check. No process was stopped.' }

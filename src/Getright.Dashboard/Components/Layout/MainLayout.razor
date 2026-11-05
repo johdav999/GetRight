@@ -8,7 +8,7 @@
     {
         <aside class="test-page-panel" aria-label="Tested application">
             <div class="test-page-toolbar">
-                <div><span class="eyebrow">TESTED APPLICATION</span><strong>@panelTitle</strong></div>
+                <div><span class="eyebrow">TESTED APPLICATION</span><strong title="@panelTitle">@panelTitle</strong></div>
                 @if (panelUrl is not null)
                 {
                     <a class="button-link secondary" href="@panelUrl" target="_blank" rel="noopener noreferrer" @onclick="CloseTestPage" title="Open the test entry page in a standalone tab">Undock <span aria-hidden="true">↗</span></a>

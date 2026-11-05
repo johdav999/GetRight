@@ -1,7 +1,13 @@
 import { runCommand } from './processes.mjs';
 
 export function nativeCompilerCrash(output) {
-  return /Microsoft\.CSharp\.Core\.targets/i.test(output) && /\berror\s*:\s*Fatal error\.\s*0xC0000005\b/i.test(output);
+  // Roslyn reports STATUS_ACCESS_VIOLATION either directly or as MSBuild's
+  // signed csc.dll exit status. Match one compiler diagnostic line, so an
+  // unrelated application's access violation cannot trigger build recovery.
+  return output.split(/\r?\n/).some(line => /Microsoft\.CSharp\.Core\.targets/i.test(line) && (
+    /\berror\s*:\s*Fatal error\.\s*(?:0xC0000005\b|System\.AccessViolationException:)/i.test(line) ||
+    /\berror\s+MSB6006\s*:\s*["']csc(?:\.dll|\.exe)?["']\s+exited with code\s+["']?(?:-1073741819|3221225477|0xC0000005)["']?\s*\./i.test(line)
+  ));
 }
 
 // Native access violations are intermittent compiler-process failures. Retry

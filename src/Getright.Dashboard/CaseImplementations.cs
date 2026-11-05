@@ -13,25 +13,52 @@ public record WorkflowPlan(int Version, string Fixture, string EntryPath, string
 public record WorkflowImplementation(string JobId, string DefinitionDigest, string PlanJson, string PlanDigest,
     string EngineDigest, string PlatformBaseCommit, string ResultCommit, string? ApplicationSourceCommit,
     List<string> ValidationRunIds, DateTimeOffset VerifiedAt);
+public record RetainedWorkflow(WorkflowImplementation Binding, string ThreadId);
+public record CaseSharedBuild(string BuildKey, string OwnerJobId, string BuildVersion, string SdkVersion, string RecipeDigest, string ArtifactDigest);
 public record CaseImplementationJob(string Id, string TestId, string ApplicationId, string Status,
     UatTest TestSnapshot, string DefinitionDigest, ApplicationProfile? ApprovedTarget,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string? PlatformBaseCommit = null,
     string? WorktreePath = null, string? ApplicationWorktree = null, string? ThreadId = null,
     string? ResultCommit = null, string? EngineDigest = null, string? PlanJson = null, string? PlanDigest = null,
     ApplicationProfile? ValidationTarget = null, List<string>? ValidationRunIds = null,
-    string? Error = null, bool CancelRequested = false);
+    string? Error = null, bool CancelRequested = false, string? RetryOfJobId = null, RetainedWorkflow? RetainedPlan = null,
+    string? BatchId = null, CaseSharedBuild? SharedBuild = null);
 public record CaseImplementationClaim(CaseImplementationJob Job, string Lease);
+public record CaseImplementationBatch(string Id, List<CaseImplementationClaim> Claims);
 public record ApproveCaseRequest(string DefinitionDigest);
+public record CaseImplementationReadiness(bool Allowed, string? Message = null, string? BlockedJobId = null, string? EngineDigest = null);
 public record CaseImplementationReport(string Lease, string Stage, string Message,
     string? PlatformBaseCommit = null, string? WorktreePath = null, string? ApplicationWorktree = null,
     string? ThreadId = null, string? ResultCommit = null, string? EngineDigest = null,
-    string? PlanJson = null, ApplicationProfile? ValidationTarget = null);
+    string? PlanJson = null, ApplicationProfile? ValidationTarget = null, CaseSharedBuild? SharedBuild = null);
 public record CaseValidationRequest(string Lease, int Ordinal);
 public record CaseImplementationFinish(string Lease, string Status, string? Error = null);
-public record WorkerClaimRequest(string? WorkflowEngineDigest = null);
+public record WorkerClaimRequest(string? WorkflowEngineDigest = null, bool SupportsStepControl = false);
 
 public static class WorkflowContract
 {
+    // Keep byte order identical to worker/src/workflow-engine.mjs. The contract
+    // smoke compares this digest with the actual installed Node engine.
+    public static string? LocalEngineDigest()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root.Parent is not null && !File.Exists(System.IO.Path.Combine(root.FullName, "Getright.sln"))) root = root.Parent;
+        if (!File.Exists(System.IO.Path.Combine(root.FullName, "Getright.sln"))) return null;
+        var files = new[] { "workflow-plan.mjs", "workflow.mjs", "workflow-engine.mjs", "runner.mjs", "live-browser.mjs", "supervision.mjs", "writerapp.mjs", "virtual-company.mjs",
+            "../package-lock.json", "../hosts/virtual-company/Program.cs", "../../src/Getright.Dashboard/wwwroot/uat-fixture.html", "../../src/Getright.Dashboard/wwwroot/uat-fixture.js" };
+        try
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            foreach (var file in files)
+            {
+                hash.AppendData(Encoding.UTF8.GetBytes(file));
+                hash.AppendData(File.ReadAllBytes(System.IO.Path.Combine(root.FullName, "worker", "src", file)));
+            }
+            return Convert.ToHexStringLower(hash.GetHashAndReset());
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
     public const string Adapter = "declarative-v1";
     public static string Fixture(string application) => application switch {
         "getright" => "getright-note", "writerapp" => "writerapp-document", "virtual-company" => "virtual-company-test-company",
@@ -84,7 +111,10 @@ public static class WorkflowContract
 
 public static class CaseImplementationStates
 {
-    public static bool Active(string status) => status is "preparing" or "building" or "implementing" or "validating";
+    public static bool Active(string status) => status is "preparing" or "planning" or "building" or "implementing" or "validating";
+    public static bool Retryable(string status) => status is "failed" or "interrupted" or "cancelled" or "blocked";
+    public static bool Blocked(CaseImplementationJob job) => job.Status == "blocked" ||
+        (job.Status == "failed" && job.Error?.StartsWith("Implementation blocked:", StringComparison.Ordinal) == true);
 }
 
 public sealed partial class RunStore
@@ -168,6 +198,78 @@ public sealed partial class RunStore
         }
     }
     public CaseImplementationJob ApproveCase(string id, ApproveCaseRequest request, ApplicationProfile? approvedTarget)
+        => QueueCase(id, request, approvedTarget);
+
+    public CaseImplementationReadiness ImplementationReadiness(string id)
+    {
+        lock (gate)
+        {
+            var test = Test(id);
+            return CheckImplementationPrerequisites(test, test.ApplicationId == "getright" ? null : Profile(test.ApplicationId));
+        }
+    }
+    private CaseImplementationReadiness CheckImplementationPrerequisites(UatTest test, ApplicationProfile? target)
+    {
+        var engine = WorkflowContract.LocalEngineDigest();
+        // Search all history, including blockers behind cancelled attempts or
+        // older than the ordinary 100-row history page. Never rewrite that history.
+        using var db = Open(); using var command = db.CreateCommand();
+        command.CommandText = """
+            SELECT payload FROM case_implementation_jobs WHERE test_id=$test
+            AND json_extract(payload,'$.definitionDigest')=$definition
+            AND (json_extract(payload,'$.status')='blocked' OR
+                (json_extract(payload,'$.status')='failed' AND json_extract(payload,'$.error') LIKE 'Implementation blocked:%'))
+            ORDER BY rowid DESC
+            """;
+        command.Parameters.AddWithValue("$test", test.Id); command.Parameters.AddWithValue("$definition", DefinitionDigest(test));
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var previous = JsonSerializer.Deserialize<CaseImplementationJob>(reader.GetString(0), AppJson.Options)!;
+            if (previous.ApprovedTarget?.SourceCommit != target?.SourceCommit) continue;
+            var previousEngine = previous.EngineDigest;
+            // Legacy source-only attempts recorded the engine in their retained
+            // worker summary before it became a field on Planning reports.
+            if (previousEngine is null && Regex.IsMatch(previous.Id, "^[a-f0-9]{32}$"))
+            {
+                try
+                {
+                    var info = new FileInfo(Path.Combine(DataPath, "case-implementations", previous.Id, "summary.json"));
+                    if (info.Exists && info.Length <= 65536)
+                    {
+                        using var summary = JsonDocument.Parse(File.ReadAllText(info.FullName));
+                        if (summary.RootElement.TryGetProperty("engineDigest", out var digest) && digest.ValueKind == JsonValueKind.String) previousEngine = digest.GetString();
+                    }
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException) { }
+            }
+            // Unknown legacy provenance cannot establish a capability change.
+            if (engine is not null && WorkflowContract.Digest(previousEngine) && previousEngine != engine) continue;
+            return new(false, "Generation is blocked by unchanged prerequisites. Implement the missing fixture/application capabilities or review the case definition before queueing again. " + previous.Error, previous.Id, engine);
+        }
+        return new(true, EngineDigest: engine);
+    }
+
+    public CaseImplementationJob RetryCase(string id, ApproveCaseRequest request, ApplicationProfile? approvedTarget)
+    {
+        lock (gate)
+        {
+            var previous = CaseJob(id);
+            if (!CaseImplementationStates.Retryable(previous.Status)) throw new ArgumentException("Only a failed, interrupted or cancelled generation can be retried.");
+            if (request.DefinitionDigest != previous.DefinitionDigest || DefinitionDigest(Test(previous.TestId)) != previous.DefinitionDigest)
+                throw new ArgumentException("The test case changed. Review and approve its current steps before generating again.");
+            var latest = LatestCaseJobs([previous.TestId]).Single();
+            if (latest.Id != id)
+            {
+                // Repeated clicks/concurrent tabs share the same queued retry.
+                if (latest.RetryOfJobId == id && (latest.Status == "queued" || CaseImplementationStates.Active(latest.Status))) return latest;
+                throw new ArgumentException("A newer generation attempt exists. Open the latest attempt to continue.");
+            }
+            return QueueCase(previous.TestId, request, approvedTarget, id);
+        }
+    }
+
+    private CaseImplementationJob QueueCase(string id, ApproveCaseRequest request, ApplicationProfile? approvedTarget, string? retryOfJobId = null)
     {
         lock (gate)
         {
@@ -182,10 +284,21 @@ public sealed partial class RunStore
                 if (!JobStates.Hash(approvedTarget.SourceCommit) || approvedTarget.SourceWasDirty) throw new ArgumentException("Import a clean committed application's launch receipt before implementing its test.");
             }
             if (CaseJobs(id).FirstOrDefault(j => j.Status == "queued" || CaseImplementationStates.Active(j.Status)) is { } active) return active;
+            var prerequisites = CheckImplementationPrerequisites(test, approvedTarget);
+            if (!prerequisites.Allowed) throw new ArgumentException(prerequisites.Message);
             var now = DateTimeOffset.UtcNow;
+            RetainedWorkflow? retained = null;
+            if (test.Implementation is { } binding && binding.DefinitionDigest == request.DefinitionDigest && binding.ApplicationSourceCommit == approvedTarget?.SourceCommit && WorkflowContract.Hash(binding.PlanJson) == binding.PlanDigest)
+            {
+                var prior = CaseJob(binding.JobId);
+                if (prior.Status == "verified" && prior.ResultCommit == binding.ResultCommit && prior.ThreadId is { Length: > 0 } thread)
+                    retained = new(binding, thread);
+            }
             var job = new CaseImplementationJob(Guid.NewGuid().ToString("N"), id, test.ApplicationId, "queued",
-                test with { Readiness = "draft", Adapter = null, Implementation = null }, request.DefinitionDigest, approvedTarget, now, now);
-            SaveCaseJob(job); CaseEvent(job, "Test description approved for implementation. The case stays disabled until two isolated validation runs pass."); return job;
+                test with { Readiness = "draft", Adapter = null, Implementation = null }, request.DefinitionDigest, approvedTarget, now, now, RetryOfJobId: retryOfJobId, RetainedPlan: retained);
+            SaveCaseJob(job); CaseEvent(job, retryOfJobId is null
+                ? "Test description approved for implementation. The case stays disabled until two isolated validation runs pass."
+                : $"Single-case generation retry queued from attempt {retryOfJobId}. Previous logs and evidence are retained; two fresh validation runs are required."); return job;
         }
     }
     public CaseImplementationClaim? ClaimCaseJob()
@@ -196,6 +309,34 @@ public sealed partial class RunStore
             if (job is null) return null;
             job = job with { Status = "preparing", UpdatedAt = DateTimeOffset.UtcNow }; var lease = Guid.NewGuid().ToString("N");
             SaveCaseJob(job, lease, DateTimeOffset.UtcNow.AddSeconds(45)); CaseEvent(job, "Implementation claimed by the local worker."); return new(job, lease);
+        }
+    }
+    public CaseImplementationBatch? ClaimCaseBatch()
+    {
+        lock (gate)
+        {
+            ExpireCaseJobs();
+            var queued = ReadCaseJobs("WHERE json_extract(payload,'$.status')='queued' ORDER BY rowid LIMIT 10");
+            if (queued.Count == 0) return null;
+            var first = queued[0];
+            var selected = queued.TakeWhile(j => j.ApplicationId == first.ApplicationId &&
+                j.ApprovedTarget?.SourceCommit == first.ApprovedTarget?.SourceCommit).ToList();
+            var batchId = Guid.NewGuid().ToString("N"); var claims = new List<CaseImplementationClaim>(); var now = DateTimeOffset.UtcNow;
+            using var db = Open(); using var transaction = db.BeginTransaction();
+            foreach (var candidate in selected)
+            {
+                var job = candidate with { Status = "preparing", BatchId = batchId, UpdatedAt = now }; var lease = Guid.NewGuid().ToString("N");
+                using var cmd = db.CreateCommand(); cmd.Transaction = transaction;
+                cmd.CommandText = """
+                    UPDATE case_implementation_jobs SET payload=$payload,lease=$lease,lease_expires=$expires WHERE id=$id;
+                    INSERT INTO case_implementation_events(job_id,created_at,stage,message) VALUES($id,$at,'preparing',$message);
+                    """;
+                cmd.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(job, AppJson.Options)); cmd.Parameters.AddWithValue("$lease", lease);
+                cmd.Parameters.AddWithValue("$expires", now.AddSeconds(45).ToString("O")); cmd.Parameters.AddWithValue("$id", job.Id); cmd.Parameters.AddWithValue("$at", now.ToString("O"));
+                cmd.Parameters.AddWithValue("$message", $"Claimed in a batch of {selected.Count} compatible queued cases. Test plans are prepared before sharing an application build.");
+                cmd.ExecuteNonQuery(); claims.Add(new(job, lease));
+            }
+            transaction.Commit(); return new(batchId, claims);
         }
     }
     private CaseImplementationJob RequireCaseLease(string id, string lease)
@@ -212,20 +353,35 @@ public sealed partial class RunStore
         lock (gate)
         {
             var job = RequireCaseLease(id, request.Lease);
-            var stages = new[] { "preparing", "building", "implementing", "validating" };
+            var stages = new[] { "preparing", "planning", "building", "implementing", "validating" };
             if (!stages.Contains(request.Stage) || Array.IndexOf(stages, request.Stage) < Array.IndexOf(stages, job.Status)) throw new ArgumentException("Invalid test implementation stage.");
             RequireText(request.Message, "Progress message", 4000);
             static string? Keep(string? old, string? next) { if (old is not null && next is not null && old != next) throw new ArgumentException("Recorded implementation identities cannot change."); return old ?? next; }
             var target = job.ValidationTarget ?? request.ValidationTarget;
+            var shared = job.SharedBuild ?? request.SharedBuild;
+            if (request.SharedBuild is { } build)
+            {
+                if (job.BatchId is null || job.ApplicationId == "getright" || !WorkflowContract.Digest(build.BuildKey) ||
+                    !WorkflowContract.Digest(build.RecipeDigest) || !WorkflowContract.Digest(build.ArtifactDigest) ||
+                    !Regex.IsMatch(build.OwnerJobId, "^[a-f0-9]{32}$") || (job.SharedBuild is not null && job.SharedBuild != build))
+                    throw new ArgumentException("Invalid or changed shared build attribution.");
+                RequireText(build.SdkVersion, "Build SDK", 100); RequireText(build.BuildVersion, "Shared build version", 100);
+                var owner = ReadCaseJob(build.OwnerJobId);
+                if (owner.BatchId != job.BatchId || owner.ApplicationId != job.ApplicationId || owner.ApprovedTarget?.SourceCommit != job.ApprovedTarget?.SourceCommit ||
+                    string.IsNullOrWhiteSpace(owner.ApplicationWorktree)) throw new ArgumentException("A shared build must belong to the same batch and approved application source.");
+            }
             if (request.ValidationTarget is { } supplied)
             {
                 ApplicationSetup.Validate(supplied);
                 if (supplied.ApplicationId != job.ApplicationId || supplied.SourceCommit != job.ApprovedTarget?.SourceCommit || supplied.SourceWasDirty ||
+                    (shared is not null && supplied.ExpectedBuildVersion != shared.BuildVersion) ||
                     (job.ValidationTarget is not null && job.ValidationTarget != supplied)) throw new ArgumentException("Validation must use the approved clean application revision.");
             }
+            if (shared is not null && target is not null && target.ExpectedBuildVersion != shared.BuildVersion)
+                throw new ArgumentException("Shared build attribution must match the recorded validation build.");
             job = job with { PlatformBaseCommit = Keep(job.PlatformBaseCommit, request.PlatformBaseCommit), WorktreePath = Keep(job.WorktreePath, request.WorktreePath),
                 ApplicationWorktree = Keep(job.ApplicationWorktree, request.ApplicationWorktree), ThreadId = Keep(job.ThreadId, request.ThreadId), ResultCommit = Keep(job.ResultCommit, request.ResultCommit),
-                EngineDigest = Keep(job.EngineDigest, request.EngineDigest), PlanJson = Keep(job.PlanJson, request.PlanJson), ValidationTarget = target };
+                EngineDigest = Keep(job.EngineDigest, request.EngineDigest), PlanJson = Keep(job.PlanJson, request.PlanJson), ValidationTarget = target, SharedBuild = shared };
             if (job.PlatformBaseCommit is not null && !JobStates.Hash(job.PlatformBaseCommit)) throw new ArgumentException("Invalid platform base commit.");
             if (job.ResultCommit is not null && (!JobStates.Hash(job.ResultCommit) || job.ResultCommit == job.PlatformBaseCommit)) throw new ArgumentException("Record a distinct implementation commit.");
             if (request.Stage != "preparing" && (!JobStates.Hash(job.PlatformBaseCommit) || string.IsNullOrWhiteSpace(job.WorktreePath))) throw new ArgumentException("Retain the dedicated worktree and its base commit before implementation.");
@@ -262,7 +418,9 @@ public sealed partial class RunStore
         lock (gate)
         {
             var job = RequireCaseLease(id, request.Lease);
-            if (request.Status is not ("verified" or "failed" or "interrupted" or "cancelled")) throw new ArgumentException("Invalid implementation result.");
+            if (request.Status is not ("verified" or "failed" or "interrupted" or "cancelled" or "blocked")) throw new ArgumentException("Invalid implementation result.");
+            if (request.Status == "blocked" && (job.Status != "planning" || request.Error?.StartsWith("Implementation blocked:", StringComparison.Ordinal) != true))
+                throw new ArgumentException("Missing prerequisites must be reported during source-only planning with a retained explanation.");
             if (request.Status == "verified")
             {
                 var runs = (job.ValidationRunIds ?? []).Select(Get).ToList();
@@ -318,7 +476,7 @@ public sealed partial class RunStore
     }
     private void RecoverCaseJobs()
     {
-        foreach (var job in ReadCaseJobs("WHERE json_extract(payload,'$.status') IN ('preparing','building','implementing','validating')"))
+        foreach (var job in ReadCaseJobs("WHERE json_extract(payload,'$.status') IN ('preparing','planning','building','implementing','validating')"))
             EndCaseJob(job, "interrupted", "Dashboard restarted during test implementation. Retry the approved description in a new job.");
     }
 }

@@ -15,11 +15,17 @@ export async function buildVirtualCompany({ worktree, jobRoot, version, signal, 
   const template = path.join(repositoryRoot, 'worker/hosts/virtual-company');
   await copyFile(path.join(template, 'Program.cs'), path.join(root, 'Program.cs'));
   await copyFile(path.join(template, 'Host.csproj.template'), path.join(root, 'Host.csproj'));
+  // MSBuild's one-project limit does not serialize Roslyn's own compilation.
+  // Large migration snapshots have crashed during parallel metadata emission.
+  // Keep the UAT compiler process private and its internal emission sequential.
+  const compilerResponse = path.join(root, 'compiler.rsp');
+  await writeFile(compilerResponse, '/parallel-\n');
   const env = { ...cleanEnvironment(), DOTNET_CLI_HOME: path.join(repositoryRoot, '.local/dotnet'), DOTNET_CLI_TELEMETRY_OPTOUT: '1', MSBUILDDISABLENODEREUSE: '1' };
   // Migration-history projects are large. Keep compiler memory bounded on a
   // developer workstation that may also be running the apps and dashboard.
   for (const project of ['src/VirtualCompany.Web/VirtualCompany.Web.csproj', '.codex-build/getright-host/Host.csproj'])
-    await dotnetBuild(['build', project, '--disable-build-servers', '-maxcpucount:1', `-p:AssemblyVersion=${version}`, `-p:Version=${version}`], { cwd: worktree, env, signal, log });
+    await dotnetBuild(['build', project, '--disable-build-servers', '-maxcpucount:1', '-p:UseSharedCompilation=false',
+      `-p:CompilerResponseFile=${compilerResponse}`, `-p:AssemblyVersion=${version}`, `-p:Version=${version}`], { cwd: worktree, env, signal, log });
   const web = path.join(worktree, 'src/VirtualCompany.Web/bin/Debug/net9.0/VirtualCompany.Web.dll');
   const assembly = path.join(root, 'bin/Debug/net9.0/Getright.VirtualCompany.Host.dll');
   const digest = createHash('sha256').update(await readFile(web)).digest('hex');

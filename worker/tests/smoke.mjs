@@ -25,7 +25,7 @@ const legacyDb = new DatabaseSync(path.join(dataPath, 'getright.db'));
 legacyDb.exec('CREATE TABLE runs(id TEXT PRIMARY KEY,payload TEXT NOT NULL,lease TEXT); CREATE TABLE feedback(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),payload TEXT NOT NULL); PRAGMA user_version=1;');
 legacyDb.prepare('INSERT INTO runs(id,payload) VALUES(?,?)').run(legacyRun.id, JSON.stringify(legacyRun));
 legacyDb.close();
-const configuration = { dashboardUrl: origin, dataPath, headless: true };
+const configuration = { dashboardUrl: origin, dataPath, headless: true, keepBrowserOpen: false };
 const projectPath = path.join(repositoryRoot, 'src/Getright.Dashboard');
 const dll = process.env.GETRIGHT_DASHBOARD_DLL || path.join(projectPath, 'bin/Release/net10.0/Getright.Dashboard.dll');
 let server, browser, writerHost, logs = '';
@@ -78,7 +78,7 @@ try {
   assert.equal(await page.locator('button.run-button:disabled').count(), 6);
   await page.screenshot({ path: path.join(dataPath, 'dashboard-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'Run UAT test' }).first().click();
-  await expect(page.getByRole('status')).toContainText('queued');
+  await expect(page.getByRole('region', { name: 'Test case in this run' })).toContainText('Waiting for the local worker');
   const [run] = await api(origin, '/api/runs');
   assert.equal(run.acceptance, 'pending');
   await rejected(`/api/runs/${run.id}/review`, { acceptance: 'accepted' });
@@ -91,6 +91,7 @@ try {
   assert.equal(completed.status, 'passed', completed.error);
   assert.equal(completed.acceptance, 'pending', 'automation must never auto-accept a run');
   assert.equal(completed.steps.length, 4);
+  await page.getByRole('link', { name: /Back to test control room/ }).click();
   for (const step of completed.steps) {
     const response = await fetch(`${origin}/api/evidence/${step.screenshot}`);
     assert.equal(response.status, 200);
@@ -117,8 +118,20 @@ try {
   assert.equal(await exported.text(), feedback.prompt);
   assert.equal((await api(origin, `/api/runs/${run.id}`)).acceptance, 'improvements-requested');
   await page.getByRole('button', { name: 'Accept this run', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('Review saved');
+  const reviewPanel = page.getByRole('region', { name: 'Your review', exact: true });
+  await expect(reviewPanel.getByRole('status')).toContainText('Review saved: Accepted.');
+  await expect(reviewPanel.getByLabel('Current acceptance', { exact: true })).toHaveText('Accepted');
+  await expect(reviewPanel.getByRole('button', { name: 'Run accepted', exact: true })).toBeDisabled();
+  const decisionBox = await reviewPanel.getByRole('status').boundingBox(), actionsBox = await reviewPanel.locator('.review-actions').boundingBox();
+  assert(decisionBox.y >= actionsBox.y && decisionBox.y < actionsBox.y + actionsBox.height + 50, 'Saved decision must appear beside the actions, before the feedback form.');
   assert.equal((await api(origin, `/api/runs/${run.id}`)).acceptance, 'accepted');
+  const acceptedHistory = await api(origin, `/api/runs/${run.id}/reviews`);
+  const duplicates = await Promise.all(Array.from({length:3},()=>api(origin, `/api/runs/${run.id}/review`, {acceptance:'accepted'})));
+  assert(duplicates.every(value=>value.acceptance==='accepted'));
+  assert.deepEqual(await api(origin, `/api/runs/${run.id}/reviews`), acceptedHistory, 'Repeated concurrent acceptance must not append duplicate audit events.');
+  await page.reload();
+  await expect(reviewPanel.getByLabel('Current acceptance', { exact: true })).toHaveText('Accepted');
+  await expect(reviewPanel.getByRole('button', { name: 'Run accepted', exact: true })).toBeDisabled();
   await page.screenshot({ path: path.join(dataPath, 'review-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(origin);
