@@ -27,7 +27,7 @@ try{
   const db=new DatabaseSync(path.join(dataPath,'getright.db'));db.prepare('INSERT INTO draft_test_cases(id,suite_id,payload) VALUES(?,?,?)').run(test.id,'virtual-company-suite',JSON.stringify(test));db.close();
   const page=await browser.newPage();await page.goto(origin+'/?view=generation');await page.getByRole('button',{name:test.title,exact:true}).click();await page.getByRole('button',{name:'Approve and implement test case',exact:true}).click();await expect(page.getByRole('region',{name:'Test case implementation',exact:true})).toContainText('Case approved and queued');await page.close();
  }
- const batch=await api(origin,'/api/worker/case-implementations/claim-batch',{});assert.equal(batch.claims.length,2);
+ const batch=await api(origin,'/api/worker/case-implementations/claim-batch',workerClaim);assert.equal(batch.claims.length,2);
  const outcomes=await executeCaseImplementationBatch(batch,{...settings(),dashboardUrl:origin,dataPath,headless:true},{
   implement:async({worktree,prompt})=>{
    const id=[...sourcePlans.keys()].find(id=>prompt.includes(`"id": "${id}"`));assert(id);
@@ -45,3 +45,4 @@ try{
   cases:outcomes.map(j=>({id:j.id,status:j.status,sharedBuild:j.sharedBuild,validationTarget:j.validationTarget,proofs:j.validationRunIds})),companies:proofs.map(r=>r.identity.companyId),acceptance:'pending'};
  await writeFile(path.join(dataPath,'case-batch-live-report.json'),JSON.stringify(report,null,2));console.log(`PASS: ONE actual Virtual Company build, TWO sequential fresh hosts, FOUR distinct companies and passing validations; pending human acceptance. Evidence: ${dataPath}`);
 }finally{await browser?.close();await dashboard.stop();}
+import {workerClaim} from '../src/run-execution.mjs';

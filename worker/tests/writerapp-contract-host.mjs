@@ -3,11 +3,12 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
-export async function createWriterAppContractHost() {
+export async function createWriterAppContractHost({ handle } = {}) {
   const state = { version: '0.1.100.42', userId: 'contract-uat-account', creates: 0, documents: new Map() };
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
     const json = value => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(value)); };
+    if (await handle?.({ request, response, url, json, state })) return;
     if (url.pathname === '/api/app/version') return json(state.versionPayload ?? { version: state.version });
     if (url.pathname === '/api/auth/me') return json(state.authPayload ?? { isAuthenticated: true, userId: state.userId });
     if (url.pathname === '/api/onboarding/complete' && request.method === 'POST') return json({ hasCompletedOnboarding: true });

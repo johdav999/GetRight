@@ -82,6 +82,8 @@
         @if (current.Preconditions is { } preconditions) { <div class="notice"><strong>Preconditions</strong><p class="preserve-lines">@preconditions</p></div> }
         @if (current.Readiness == "setup-required")
         { <div class="notice">This adapter tests an actual local application instance. <a href="/applications">Configure its build, account and isolated data</a> before running. The connection is checked again for each run.</div> }
+        @if (current.Readiness == "qualification-required")
+        { <div class="notice"><a href="/applications">Qualify this imported workflow</a> on the current definition and target before running it here.</div> }
         <ol class="steps">@foreach (var step in current.Steps) { <li><strong>@step.Title</strong><p>@step.Expected</p></li> }</ol>
         <div class="review-question"><span class="mini-label">HUMAN REVIEW</span><p>@current.ReviewQuestion</p></div>
         <p class="detail-note">Open test page opens the configured running build in the left panel for manual review. Use Undock to open its entry page in a standalone tab. Manual review creates no run or automated result.</p>
@@ -118,7 +120,8 @@
     private IEnumerable<UatTest> VisibleTests => tests.Where(t => (filter == "all" || t.ApplicationId == filter) && (suiteId == "" || suites.FirstOrDefault(s => s.Id == suiteId)?.TestIds.Contains(t.Id) == true));
     private string? message;
     private void DismissNotice() => message = null;
-    private bool writerConfigured, companyConfigured, queueing;
+    private HashSet<string> configuredApplications = [];
+    private bool queueing;
     private const string SuitePreference = "getright.control-room.suite";
     private const string ModePreference = "getright.control-room.execution-mode";
     private bool preferencesLoaded;
@@ -160,7 +163,13 @@
         try { while (await timer.WaitForNextTickAsync(stop.Token)) await InvokeAsync(() => { Refresh(); StateHasChanged(); }); }
         catch (OperationCanceledException) { }
     }
-    private void Refresh() { tests = Store.Tests(); suites = Store.Suites(); runs = tests.SelectMany(t => Store.History(size: 12, test: t.Id).Items).OrderByDescending(r => r.CreatedAt).ToList(); writerConfigured = Store.Profile("writerapp") is not null; companyConfigured = Store.Profile("virtual-company") is not null; EnsureSelection(); }
+    private void Refresh()
+    {
+        tests = Store.Tests(); suites = Store.Suites();
+        runs = tests.SelectMany(t => Store.History(size: 12, test: t.Id).Items).OrderByDescending(r => r.CreatedAt).ToList();
+        configuredApplications = Catalogue.Value.Applications.Where(app => Store.Profile(app.Id) is not null).Select(app => app.Id).ToHashSet();
+        EnsureSelection();
+    }
     private void EnsureSelection() { selectedTest = VisibleTests.FirstOrDefault(t => t.Id == selectedTest?.Id) ?? VisibleTests.FirstOrDefault(); }
     private async Task SetFilter(string application)
     {
@@ -191,11 +200,11 @@
             var profile = Store.Profile(test.ApplicationId);
             return profile is not null && !profile.SourceWasDirty && profile.SourceCommit == test.Implementation.ApplicationSourceCommit;
         }
-        return test.Readiness == "ready" || (test.Adapter == "writerapp-create-save" && writerConfigured) || (test.Adapter == "virtual-company-test-setup" && companyConfigured);
+        return test.Readiness == "ready" || (test.Readiness == "setup-required" && configuredApplications.Contains(test.ApplicationId));
     }
     private void Select(UatTest test) => selectedTest = test;
     private string AppName(string id) => Catalogue.Value.Applications.First(a => a.Id == id).Name;
-    public static string Label(string value) => value switch { "not-run" => "Not run", "setup-required" => "Setup required", "reverification-required" => "Reverify required", "awaiting-review" => "Awaiting review", "improvements-requested" => "Improvements requested", _ => char.ToUpperInvariant(value[0]) + value[1..] };
+    public static string Label(string value) => value switch { "not-run" => "Not run", "setup-required" => "Setup required", "qualification-required" => "Qualification required", "reverification-required" => "Reverify required", "awaiting-review" => "Awaiting review", "improvements-requested" => "Improvements requested", _ => char.ToUpperInvariant(value[0]) + value[1..] };
     private async Task Queue(UatTest test)
     {
         queueing = true; message = null;

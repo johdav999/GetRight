@@ -7,6 +7,7 @@
 @if (job is null) { <h1>Job unavailable</h1><p role="alert">@error</p> }
 else
 {
+    var original = Store.Get(job.OriginalRunId);
     <header class="page-header"><div><p class="eyebrow">@job.ApplicationId · JOB @job.Id[..8]</p><h1>Implementation review</h1><p class="muted">Review the task, implement it in a worktree, then inspect the regression result.</p></div><span class="badge @job.Status">@Home.Label(job.Status)</span></header>
     <div class="review-actions"><a href="/runs/@job.OriginalRunId">Original run and feedback</a>@if (job.RerunId is { } rerunId) { <a href="/runs/@rerunId">New regression run</a> }</div>
     @if (job.StartBlocker is { } blocker) { <div class="notice">@blocker</div> }
@@ -25,16 +26,20 @@ else
         @if (notice is not null) { <p role="status">@notice</p> }
         @if (job.Summary is { } summary) { <h3>Codex result</h3><p class="preserve-lines">@summary</p> }
         <dl class="metadata"><div><dt>Base commit</dt><dd>@(job.BaseCommit ?? "Not recorded")</dd></div><div><dt>Result commit</dt><dd>@(job.ResultCommit ?? "Not recorded yet")</dd></div><div><dt>Tested build</dt><dd>@(job.BuildVersion ?? "Not built yet")</dd></div><div><dt>Codex thread</dt><dd>@(job.ThreadId ?? "Not started yet")</dd></div><div><dt>Worktree</dt><dd>@(job.WorktreePath ?? "Not prepared yet")</dd></div></dl>
+        @if (job.Recipe is { } recipe) { <p>Build recipe <strong>@recipe.Id v@(recipe.Version)</strong></p> }
+        @if (original.Configuration is { } configuration)
+        { <p>Original manifest revision @configuration.Manifest.Revision · Workflow <span title="@configuration.WorkflowDigest">@configuration.WorkflowDigest[..12]</span></p> }
+        @if (original.DefinitionRevision is { } revision) { <p>Imported workflow revision @revision</p> }
         @if (job.WorktreeRemovedAt is {} removed) { <p>Worktree removed at @removed.ToLocalTime().ToString("g"). The branch, commit and logs are retained.</p> }
         @if (job.WorktreePath is not null)
-        { <div class="artifact-links">@foreach (var file in new[] { "codex.log", "build.log", "launch.log", "diff.patch", "summary.json" }) { if (Store.JobArtifactPath(job.Id, file) is { } artifact && System.IO.File.Exists(artifact)) { <a href="/api/jobs/@job.Id/artifacts/@file">@file</a> } }</div> }
+        { <div class="artifact-links">@foreach (var file in new[] { "codex.log", "build.log", "launch.log", "diff.patch", "summary.json", "build-receipt.json" }) { if (Store.JobArtifactPath(job.Id, file) is { } artifact && System.IO.File.Exists(artifact)) { <a href="/api/jobs/@job.Id/artifacts/@file">@file</a> } }</div> }
         <div class="notice">The worktree and logs stay local for review. A completed job leaves the new run's human acceptance pending.</div>
     </section>
     <section class="panel"><div class="panel-heading"><h2>Live progress</h2><span class="counter">@events.Count</span></div><ol class="job-events">@foreach (var item in events) { <li><span class="mini-label">@item.CreatedAt.ToLocalTime().ToString("T") · @item.Stage</span><p>@item.Message</p></li> }</ol></section>
     </div>
     @if (job.RerunId is { } comparisonId)
     {
-        var original = Store.Get(job.OriginalRunId); var rerun = Store.Get(comparisonId);
+        var rerun = Store.Get(comparisonId);
         <section class="panel comparison"><div class="panel-heading"><h2>Original and changed evidence</h2><a href="/runs/@rerun.Id">Review the new run</a></div><p class="comparison-status">Original: @Home.Label(original.Status) / @Home.Label(original.Acceptance). New: @Home.Label(rerun.Status) / @Home.Label(rerun.Acceptance).</p>
         @foreach (var step in original.TestSnapshot.Steps)
         {

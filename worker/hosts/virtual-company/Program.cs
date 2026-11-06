@@ -5,13 +5,17 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using VirtualCompany.Api.Tests;
+using VirtualCompany.Application.Agents;
 using VirtualCompany.Domain.Entities;
 using VirtualCompany.Domain.Enums;
+using VirtualCompany.Infrastructure.Companies;
 
 // This harness composes the real API with the repository's isolated SQLite test
 // factory. It is never a production host and never loads the user's .env file.
-using var factory = new IsolatedFactory();
+var finance = new FinanceUat();
+using var factory = new IsolatedFactory(finance);
 var reference = Guid.Parse("04040404-0404-0404-0404-040404040404");
 await factory.SeedAsync(async db =>
 {
@@ -34,6 +38,7 @@ if (Assembly.GetExecutingAssembly().GetName().Version!.ToString() != version || 
     throw new InvalidOperationException("The loaded API, harness and compiled web assembly must identify the same build.");
 app.Run(async context =>
 {
+    if (await finance.TryHandleAsync(context, factory)) return;
     if (context.Request.Path == "/_getright/prepare-company" && context.Request.Method == "POST" && Guid.TryParse(context.Request.Query["companyId"], out var companyId))
     {
         // Fixture prerequisites only. The actual permission write is always made
@@ -85,7 +90,7 @@ app.Run(async context =>
 });
 await app.RunAsync();
 
-sealed class IsolatedFactory : TestWebApplicationFactory
+sealed class IsolatedFactory(FinanceUat finance) : TestWebApplicationFactory
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -93,5 +98,12 @@ sealed class IsolatedFactory : TestWebApplicationFactory
         builder.UseContentRoot(Path.Combine(Environment.CurrentDirectory, "src", "VirtualCompany.Api"));
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
         { ["TestCompanies:CreationEnabled"] = "true" }));
+        builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<IInternalCompanyToolContract>();
+            services.AddScoped<IInternalCompanyToolContract, TaskDraftToolAdapter>();
+            services.RemoveAll<IAgentReasoningGateway>();
+            services.AddSingleton<IAgentReasoningGateway>(finance);
+        });
     }
 }

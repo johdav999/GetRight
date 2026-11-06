@@ -1,0 +1,50 @@
+[
+  {
+    "schemaVersion": 1,
+    "revision": 2,
+    "applicationId": "getright",
+    "fixtureAdapter": "getright-save-note",
+    "entryPath": "/uat-fixture.html",
+    "adapters": [{ "id": "getright-save-note", "version": 1 }, { "id": "declarative-v1", "version": 1 }, { "id": "configured-v2", "version": 2 }],
+    "capabilities": ["test"]
+  },
+  {
+    "schemaVersion": 1,
+    "revision": 4,
+    "applicationId": "writerapp",
+    "fixtureAdapter": "writerapp-create-save",
+    "entryPath": "/app/documents",
+    "adapters": [{ "id": "writerapp-create-save", "version": 1 }, { "id": "declarative-v1", "version": 1 }, { "id": "configured-v2", "version": 2 }],
+    "capabilities": ["test", "implement"],
+    "buildRecipe": { "id": "writerapp-dotnet", "version": 1 },
+    "runtime": {
+      "version": 1,
+      "identities": [{ "name": "writer", "checks": [
+        { "path": "/api/app/version", "assertions": [{ "field": "version", "binding": "build" }] },
+        { "path": "/api/auth/me", "assertions": [
+          { "field": "isAuthenticated", "equalsValue": true }, { "field": "userId", "binding": "identity" }
+        ] }
+      ] }]
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "revision": 4,
+    "applicationId": "virtual-company",
+    "fixtureAdapter": "virtual-company-test-setup",
+    "entryPath": "/test-companies/new",
+    "adapters": [{ "id": "virtual-company-test-setup", "version": 1 }, { "id": "declarative-v1", "version": 1 }, { "id": "configured-v2", "version": 2 }],
+    "capabilities": ["test", "implement"],
+    "buildRecipe": { "id": "virtual-company-dotnet", "version": 1 },
+    "runtime": {
+      "version": 1,
+      "identities": [{ "name": "owner", "checks": [
+        { "path": "/_getright/runtime", "assertions": [
+          { "field": "version", "binding": "build" }, { "field": "userId", "binding": "identity" },
+          { "field": "companyId", "binding": "scope" }, { "field": "role", "binding": "role" },
+          { "field": "isolated", "equalsValue": true }
+        ] }
+      ] }]
+    }
+  }
+]

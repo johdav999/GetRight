@@ -10,7 +10,10 @@ else if (before is not null && after is not null)
     <section class="panel comparison">
         <div class="compare-images comparison-summary">
         @foreach (var run in new[] { before, after })
-        { <div><h2><a href="/runs/@run.Id">Run @run.Id[..8]</a></h2><p>@run.CreatedAt.ToLocalTime().ToString("g")</p><p>Build: @(run.BuildVersion ?? "Not recorded")</p><p>Source: @(run.Target?.SourceCommit ?? "Not recorded")</p><p><span class="badge @run.Status">@Home.Label(run.Status)</span> <span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></p>@if (run.EvidenceRetiredAt is not null) { <p>Evidence retired; run history retained.</p> }</div> }
+        { <div><h2><a href="/runs/@run.Id">Run @run.Id[..8]</a></h2><p>@run.CreatedAt.ToLocalTime().ToString("g")</p><p>Build: @(run.BuildVersion ?? "Not recorded")</p><p>Source: @(run.Target?.SourceCommit ?? "Not recorded")</p>
+          @if (run.Configuration is { } configuration) { <p>Manifest revision @configuration.Manifest.Revision · Workflow <span title="@configuration.WorkflowDigest">@configuration.WorkflowDigest[..12]</span></p> }
+          @if (run.DefinitionRevision is { } revision) { <p>Imported workflow revision @revision</p> }
+          <p><span class="badge @run.Status">@Home.Label(run.Status)</span> <span class="badge @run.Acceptance">@Home.Label(run.Acceptance)</span></p>@if (run.EvidenceRetiredAt is not null) { <p>Evidence retired; run history retained.</p> }</div> }
         </div>
         @foreach(var stepId in before.TestSnapshot.Steps.Select(s => s.Id).Union(after.TestSnapshot.Steps.Select(s => s.Id)))
         {

@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { api } from './settings.mjs';
 import { boundedLog, cleanEnvironment, stopProcess } from './processes.mjs';
+import { runtimeEnvironment } from './runtime-configuration.mjs';
 
 export class RunSessions {
   constructor(configuration, { reviewLimit = 3, changed = () => {} } = {}) {
@@ -19,7 +20,7 @@ export class RunSessions {
     const root = path.join(configuration.dataPath, 'run-workers', id); await mkdir(root, { recursive: true });
     const stdout = boundedLog(path.join(root, 'stdout.log')), stderr = boundedLog(path.join(root, 'stderr.log'));
     const child = fork(fileURLToPath(new URL('./run-child.mjs', import.meta.url)), [], {
-      env: { ...cleanEnvironment(), ...(process.env.PLAYWRIGHT_BROWSERS_PATH ? { PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH } : {}) },
+      env: { ...cleanEnvironment(), ...runtimeEnvironment(claim.run), ...(process.env.PLAYWRIGHT_BROWSERS_PATH ? { PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH } : {}) },
       windowsHide: true, detached: process.platform !== 'win32', execArgv: [], stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
     child.stdout.on('data', stdout); child.stderr.on('data', stderr);

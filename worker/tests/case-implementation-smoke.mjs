@@ -9,8 +9,7 @@ import { chromium, expect } from '@playwright/test';
 import { api, repositoryRoot } from '../src/settings.mjs';
 import { dashboardHost } from './dashboard-host.mjs';
 import { executeCaseImplementation } from '../src/case-implementation.mjs';
-import { executeRun } from '../src/runner.mjs';
-import { workflowEngineDigest } from '../src/workflow-engine.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 import { runCommand } from '../src/processes.mjs';
 
 const dataPath = path.join(repositoryRoot, '.local', `case-implementation-${Date.now()}`); await mkdir(dataPath, { recursive: true });
@@ -52,7 +51,7 @@ const approve = async test => {
     return (await api(origin, `/api/case-implementations?test=${test.id}`))[0];
   } finally { await browser?.close(); }
 };
-const claim = () => api(origin, '/api/worker/case-implementations/claim', {});
+const claim = () => api(origin, '/api/worker/case-implementations/claim', workerClaim);
 const rejected = async (route, body) => { const result = await fetch(`${origin}${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); assert.equal(result.status, 400, `${route}: ${await result.text()}`); };
 const lookup = async id => (await api(origin, '/api/catalog')).tests.find(t => t.id === id);
 const report = { scope: 'Draft approval/implementation lifecycle; synthetic Codex output with real Git/browser/evidence', flows: [], issues: [] };
@@ -71,11 +70,13 @@ try {
   const enabled = await lookup(test.id); assert.equal(enabled.readiness, 'ready'); assert.equal(enabled.adapter, 'declarative-v1'); assert(enabled.implementation.planDigest);
   for (const runId of verified.validationRunIds) { const run = await api(origin, `/api/runs/${runId}`); assert.equal(run.status, 'passed'); assert.equal(run.acceptance, 'pending'); assert.equal(run.steps.length, 2); assert.equal((await fetch(`${origin}/api/evidence/${run.trace}`)).status, 200); }
   const normal = await api(origin, '/api/runs', { testId: test.id }); assert.equal(await api(origin, '/api/worker/claim', {}), null, 'Legacy workers must not claim new workflows.');
-  const result = await executeRun(await api(origin, '/api/worker/claim', { workflowEngineDigest }), configuration); assert.equal(result.id, normal.id); assert.equal(result.status, 'passed', result.error); assert.equal(result.acceptance, 'pending');
+  assert.equal(normal.configuration.requiredEngineDigest, workerClaim.workflowEngineDigest);
+  assert.equal(await api(origin, '/api/worker/claim', { ...workerClaim, workflowEngineDigest: 'f'.repeat(64) }), null, 'A different engine cannot claim a verified workflow.');
+  const result = await executeRun(await api(origin, '/api/worker/claim', workerClaim), configuration); assert.equal(result.id, normal.id); assert.equal(result.status, 'passed', result.error); assert.equal(result.acceptance, 'pending');
   // A generated declarative workflow must use the same step gates as built-ins;
   // its two implementation proofs above remain automatic.
   const stepped = await api(origin, '/api/runs', { testId: test.id, docked: true, stepByStep: true }), steppedStop = new AbortController();
-  const steppedExecution = executeRun(await api(origin, '/api/worker/claim', { workflowEngineDigest, supportsStepControl: true }), { ...configuration, keepBrowserOpen: false, signal: steppedStop.signal });
+  const steppedExecution = executeRun(await api(origin, '/api/worker/claim', workerClaim), { ...configuration, keepBrowserOpen: false, signal: steppedStop.signal });
   try {
     for (const step of test.steps) {
       let state;

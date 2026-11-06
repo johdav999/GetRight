@@ -3,10 +3,9 @@ import { mkdir, readFile, writeFile, access, lstat, realpath } from 'node:fs/pro
 import { api, repositoryRoot } from './settings.mjs';
 import { cleanEnvironment, runCommand, boundedLog } from './processes.mjs';
 import { implementWithCodex } from './codex-worker.mjs';
-import { jobConfiguration } from './jobs.mjs';
-import { buildWriterApp, launchWriterApp, buildVersion } from './writerapp-host.mjs';
-import { buildVirtualCompany, launchVirtualCompany } from './virtual-company-host.mjs';
-import { executeRun } from './runner.mjs';
+import { buildAttribution, jobConfiguration, prepareApplicationWorktree, recordBuildReceipt } from './build-recipes.mjs';
+import { sealCaseBuild } from './case-build.mjs';
+import { executeRun, workerExecution } from './run-execution.mjs';
 import { supervise } from './supervision.mjs';
 import { validateWorkflow, workflowContract } from './workflow-plan.mjs';
 import { workflowEngineDigest } from './workflow-engine.mjs';
@@ -27,7 +26,7 @@ export async function executeCaseImplementation(claim, configuration, adapters =
   const supervision = execution.supervision || supervise({ configuration, heartbeat: `/api/case-implementations/${job.id}/heartbeat`, lease, timeoutMs: 3600000, cancellation: true });
   const signal = supervision.signal;
   let phase = 'preparing', host, resultCommit, baseCommit, planWorktree, applicationWorktree, outcome = 'failed', failure, prerequisitesBlocked = false;
-  let deferred = false, cleaned = false, sharedAttribution = null;
+  let deferred = false, cleaned = false, sharedAttribution = null, recipe, recipeDigest, buildReceipt;
   const route = suffix => `/api/case-implementations/${job.id}/${suffix}`;
   const report = async (message, extra = {}) => { signal.throwIfAborted(); return api(configuration.dashboardUrl, route('report'), { lease, stage: phase, message: message.slice(0, 4000), ...extra }); };
   const git = (cwd, args, options = {}) => runCommand('git', ['-c', 'core.longpaths=true', '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${path.join(root, 'empty-hooks')}`, '-C', cwd, ...args], { env: cleanEnvironment(), signal, ...options });
@@ -43,19 +42,25 @@ export async function executeCaseImplementation(claim, configuration, adapters =
     finally {
       await supervision.stop();
       await writeFile(path.join(root, 'summary.json'), JSON.stringify({ jobId: job.id, testId: job.testId, platformBaseCommit: baseCommit, resultCommit, worktree: planWorktree, applicationWorktree,
-        batchId: job.batchId ?? null, sharedBuild: sharedAttribution, engineDigest: workflowEngineDigest, status: outcome, error: failure ?? null }, null, 2));
+        batchId: job.batchId ?? null, sharedBuild: sharedAttribution, recipe: recipe ?? job.recipe, recipeDigest, buildReceipt,
+        engineDigest: workflowEngineDigest, status: outcome, error: failure ?? null }, null, 2));
     }
   };
   try {
     await supervision.ready; signal.throwIfAborted(); await mkdir(path.join(root, 'empty-hooks'));
     const platform = await realpath(adapters.platformRepository || repositoryRoot);
     if (!samePath((await git(platform, ['rev-parse', '--show-toplevel'])).output.trim(), platform)) throw new Error('The platform repository must be its Git root.');
-    const options = job.applicationId === 'getright' ? { worktreeRoot: path.join(repositoryRoot, 'worktrees'), codexTimeoutMs: 1800000, ...configuration.caseJobOptions } : await jobConfiguration(configuration, job.applicationId);
+    const demo = job.applicationId === 'getright';
+    const options = demo ? { worktreeRoot: path.join(repositoryRoot, 'worktrees'), codexTimeoutMs: 1800000, ...configuration.caseJobOptions } :
+      await jobConfiguration(configuration, job.applicationId, job.recipe);
+    if (!demo && (!hash(job.approvedTarget?.sourceCommit) || job.approvedTarget.sourceWasDirty))
+      throw new Error('A reproducible clean application revision is required.');
+    ({ recipe, recipeDigest } = options);
     await mkdir(options.worktreeRoot, { recursive: true });
     const worktreeRoot = await realpath(options.worktreeRoot);
-    await requireBuildSpace([worktreeRoot, root], job.applicationId);
+    await (adapters.checkBuildSpace || requireBuildSpace)([worktreeRoot, root], job.applicationId);
     planWorktree = path.join(worktreeRoot, `tc-${job.id.slice(0, 10)}`);
-    applicationWorktree = job.applicationId === 'getright' ? null : path.join(worktreeRoot, `ta-${job.id.slice(0, 10)}`);
+    applicationWorktree = demo ? null : path.join(worktreeRoot, `ta-${job.id.slice(0, 10)}`);
     for (const directory of [planWorktree, applicationWorktree].filter(Boolean)) {
       if (process.platform === 'win32' && directory.length > 110) throw new Error('Choose a shorter trusted worktreeRoot.');
       try { await access(directory); throw new Error('An implementation worktree already exists. It will not be overwritten.'); }
@@ -68,12 +73,9 @@ export async function executeCaseImplementation(claim, configuration, adapters =
     if (applicationWorktree) {
       const application = await realpath(options.repositoryPath);
       if (!samePath((await git(application, ['rev-parse', '--show-toplevel'])).output.trim(), application) || samePath(application, worktreeRoot) || within(application, worktreeRoot) || !hash(job.approvedTarget?.sourceCommit) || job.approvedTarget.sourceWasDirty) throw new Error('A reproducible clean application revision and external worktree root are required.');
-      await git(application, ['cat-file', '-e', `${job.approvedTarget.sourceCommit}:${job.applicationId === 'virtual-company' ? 'VirtualCompany.sln' : 'BlazorApp.csproj'}`]);
-      await git(application, ['worktree', 'add', ...(job.applicationId === 'virtual-company' ? ['--no-checkout'] : []), '--detach', applicationWorktree, job.approvedTarget.sourceCommit]);
-      if (job.applicationId === 'virtual-company') {
-        await git(applicationWorktree, ['sparse-checkout', 'set', '--no-cone', '/*', '!/*/', '/src/', '/tests/', '/docs/', '/.design-addin/', '/.agents/', '!/src/VirtualCompany.Api/App_Data/']);
-        await git(applicationWorktree, ['checkout', 'HEAD']);
-      }
+      await prepareApplicationWorktree(git, options, application, applicationWorktree, job.approvedTarget.sourceCommit, {
+        created: () => report('Dedicated application worktree registered.', { applicationWorktree }),
+      });
       applicationSource = applicationWorktree;
     }
     phase = 'planning';
@@ -122,14 +124,22 @@ ${JSON.stringify(job.testSnapshot, null, 2)}
     await git(planWorktree, ['add', '--', artifactRelative]);
     await git(planWorktree, ['commit', '-m', `Getright: implement test ${job.testId} (${job.id.slice(0, 8)})`]);
     resultCommit = (await git(planWorktree, ['rev-parse', 'HEAD'])).output.trim();
+    const checkApplication = async (checkSignal = signal) => {
+      if ((await git(applicationWorktree, ['rev-parse', 'HEAD'], { signal: checkSignal })).output.trim() !== job.approvedTarget.sourceCommit ||
+          (await git(applicationWorktree, ['status', '--porcelain'], { signal: checkSignal })).output.trim())
+        throw new Error('The application build changed source or Git identity. Validation cannot be attributed to the approved commit.');
+    };
     const compile = async (buildSignal = signal) => {
-      const build = await (adapters.build || (job.applicationId === 'virtual-company' ? buildVirtualCompany : buildWriterApp))({ worktree: applicationWorktree, jobRoot: root,
-        version: buildVersion(job.id), signal: AbortSignal.any([buildSignal, AbortSignal.timeout(options.buildTimeoutMs)]), log: buildLog });
-      if ((await git(applicationWorktree, ['status', '--porcelain'], { signal: buildSignal })).output.trim()) throw new Error('The application build changed source. Validation cannot be attributed to the approved commit.');
+      const version = options.version(job.id);
+      const build = await (adapters.build || options.build)({ worktree: applicationWorktree, jobRoot: root, resultCommit: job.approvedTarget.sourceCommit,
+        jobId: job.id, version, signal: AbortSignal.any([buildSignal, AbortSignal.timeout(options.buildTimeoutMs)]), log: buildLog });
+      if (build.version !== version) throw new Error('The recipe did not produce the recorded build version.');
+      await checkApplication(buildSignal);
       return build;
     };
     const validate = async shared => {
     signal.throwIfAborted();
+    let sealed, validationTarget;
     if (applicationWorktree) {
       phase = 'building';
       let build;
@@ -141,27 +151,31 @@ ${JSON.stringify(job.testSnapshot, null, 2)}
         buildLog(`Shared application build from case ${shared.attribution.ownerJobId}. Build key ${shared.attribution.buildKey}. Compiler output is retained in that case's build.log.\n`);
         build = { ...shared.build, jobRoot: root };
       } else {
-        await report('Bounded workflow generated and checked. Building the approved application revision for a fresh isolated validation host.', { resultCommit, engineDigest: workflowEngineDigest });
+        await report(`Building the approved application revision using recipe ${recipe.id} v${recipe.version}.`, { resultCommit, engineDigest: workflowEngineDigest });
         build = await compile();
+        sealed = await sealCaseBuild(build, signal);
       }
-      if ((await git(applicationWorktree, ['status', '--porcelain'])).output.trim()) throw new Error('The application build changed source. Validation cannot be attributed to the approved commit.');
-      host = await (adapters.launch || (job.applicationId === 'virtual-company' ? launchVirtualCompany : launchWriterApp))({ build, resultCommit: job.approvedTarget.sourceCommit, signal, log: buildLog });
+      buildReceipt = buildAttribution(options, shared?.attribution.artifactDigest ?? sealed.artifactDigest);
+      await checkApplication();
+      host = await (adapters.launch || options.launch)({ build, resultCommit: job.approvedTarget.sourceCommit, sourceTarget: job.approvedTarget, signal, log: buildLog });
+      await (shared || sealed).verify(signal);
+      await checkApplication();
+      validationTarget = await recordBuildReceipt(root, host.target, buildReceipt);
     }
     phase = 'implementing';
-    await report('Workflow committed. Preparing two fresh isolated validations.', { resultCommit, engineDigest: workflowEngineDigest, ...(host ? { validationTarget: host.target } : {}) });
+    await report('Workflow committed. Preparing two fresh isolated validations.', { resultCommit, engineDigest: workflowEngineDigest, ...(validationTarget ? { validationTarget } : {}) });
     phase = 'validating';
     await report('Workflow committed. Validating every frozen step twice with new isolated fixtures.', { resultCommit, planJson, engineDigest: workflowEngineDigest, ...(implemented.threadId ? { threadId: implemented.threadId } : {}) });
     for (let ordinal = 1; ordinal <= 2; ordinal++) {
       signal.throwIfAborted();
-      const validation = await api(configuration.dashboardUrl, route('validate'), { lease, ordinal });
+      const validation = await api(configuration.dashboardUrl, route('validate'), { lease, ordinal, worker: workerExecution });
       const result = await executeRun(validation, { ...configuration, headless: true, keepBrowserOpen: false, signal });
       if (result.status !== 'passed') throw new Error(`Validation ${ordinal}/2 failed in run ${result.id}: ${result.error || result.status}. The case remains disabled.`);
       await report(`Validation ${ordinal}/2 passed. Human acceptance remains pending.`);
     }
     if ((await git(planWorktree, ['status', '--porcelain'])).output.trim()) throw new Error('The committed workflow changed during validation.');
-    if (applicationWorktree && (await git(applicationWorktree, ['status', '--porcelain'])).output.trim()) throw new Error('The application source changed during validation.');
     await host?.stop(); host = null;
-    if (shared) await shared.verify(signal);
+    if (applicationWorktree) { await checkApplication(); await (shared || sealed).verify(signal); }
     const completed = await api(configuration.dashboardUrl, route('finish'), { lease, status: 'verified' });
     outcome = completed.status;
     return completed;

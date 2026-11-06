@@ -1,7 +1,7 @@
 # API and runner contract
 
-All routes are loopback-only. POST bodies are JSON, except the bodyless claim
-route. Invalid workflow state and unknown identifiers return 400; unregistered
+All routes are loopback-only. POST bodies are JSON where required. Invalid
+workflow state and unknown identifiers return 400; unregistered
 evidence and missing task exports return 404. Request bodies are limited to 256 KiB
 to support bounded Unicode prompts; interactive messages are limited to 128 KiB.
 No CORS policy is enabled.
@@ -10,11 +10,11 @@ Schema 5 also provides [suite, generated-case proposal and manual entry-page
 contracts](test-suites.md#api). The catalogue includes persisted drafts; they stay
 disabled for automation until execution support is implemented.
 
-Schema 6 adds [explicit draft implementation and verification](test-implementation.md#api-and-recovery).
-Normal worker claims may send `{ "workflowEngineDigest": "<sha256>" }` to declare
-declarative workflow support. Bodyless/empty claims remain compatible with built-in
-adapters and cannot accidentally take a declarative run. Verified implementations
-are frozen in run snapshots, including plan/engine digests and source attribution.
+Schema 6 added [explicit draft implementation and verification](test-implementation.md#api-and-recovery).
+Verified implementations are frozen in run snapshots, including plan/engine digests
+and source attribution. Schema 7 adds application manifests and worker attribution.
+Schema 8 adds local manifest revisions, imported workflows and qualification history.
+Bodyless run claims can only take eligible pre-upgrade runs without a snapshot.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -27,7 +27,7 @@ are frozen in run snapshots, including plan/engine digests and source attributio
 | GET | `/api/runs` | Latest 100 runs, newest first; excludes worker lease. Use paginated history for older runs. |
 | GET | `/api/runs/{id}` | Run snapshot and current human acceptance. |
 | POST | `/api/runs` | Queue `{ "testId": "getright-save-note" }`. |
-| POST | `/api/worker/claim` | Oldest queued run with private lease, or 204. |
+| POST | `/api/worker/claim` | Oldest compatible queued run with private lease, or 204. |
 | POST | `/api/runs/{id}/complete` | Submit terminal automated result with valid lease. |
 | POST | `/api/runs/{id}/review` | Set `{ "acceptance": "accepted" }`, pending or improvements-requested. |
 | GET | `/api/runs/{id}/feedback` | Original comments and generated prompts. |
@@ -35,11 +35,70 @@ are frozen in run snapshots, including plan/engine digests and source attributio
 | GET | `/api/runs/{id}/tasks/{feedbackId}` | Download the generated plain-text task. |
 | GET | `/api/evidence/{id}/{file}` | Serve a referenced screenshot or trace only. |
 
-## Completion example
+## Local application configuration
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| GET / POST | `/api/applications/{id}/manifest` | Read the effective manifest or save a local revision. |
+| GET | `/api/applications/{id}/recipes` | List locally authorized recipe IDs and versions for the application. |
+| POST | `/api/applications/{id}/preview` | Check a proposed profile using the effective manifest and return readiness, target identity and the fixture plan. |
+| GET / POST | `/api/applications/{id}/workflows` | List, import or revise local version 2 workflows. |
+| GET | `/api/tests/{id}/qualification` | Read qualification status and proof runs for the current configuration. |
+| POST | `/api/tests/{id}/qualify` | Queue one qualification attempt using the saved binding. |
+
+Definition writes accept `revision` and `definitionJson` containing the JSON
+definition as a string. Use the current revision when editing. To import a new
+workflow, use revision `0`. Include the existing workflow `id` when revising.
+Preview accepts the same profile shape as the binding endpoint without persisting
+it. Responses expose identity details without credential values.
+
+Normal queue and manual open requests require the two most recent qualification
+attempts for the exact imported workflow revision, manifest and binding to pass.
+Each qualification run starts with pending human acceptance. Run snapshots
+retain `definitionRevision` for imported workflows and `qualificationKey` for
+qualification attempts. The proof runs cannot be used to start improvement jobs.
+
+## Run attribution and worker claims
+
+New run payloads contain `configuration` with the manifest revision and schema,
+manifest/workflow/binding fingerprints, adapter version and required workflow
+engine (if any). The full workflow and application target remain in
+`testSnapshot` and `target`. Legacy payloads may have no configuration. Passing
+application results retain legacy identity fields and a typed `identity.resources`
+list with `kind`, `id` and optional `scopeId`, derived from the validated adapter result.
+
+Version 2 workflow claims require `integrationContractVersion: 1` alongside
+`configuredWorkflowVersion: 2` and a configured engine digest. This lets
+upgraded dashboards refuse workers that cannot execute the migrated workflows.
+
+Worker run and job claims send `{ "runConfigurationVersion": 1,
+"workflowEngineDigest": "<sha256>", "supportsStepControl": true, "runtimeContractVersion": 1 }`. A worker
+without a compatible declaration cannot claim new runs or improvement jobs;
+verified workflows also require a matching engine digest. Improvement rerun and
+case validation requests include `worker: { "runConfigurationVersion": 1,
+"engineDigest": "<sha256>", "runtimeContractVersion": 1 }` to record the worker on the direct-start run.
+Runs with configured runtime plans require a compatible runtime worker. Their
+results include `runtime.verifiedAfter` and `runtime.fixtures`. Passing results
+require post-execution verification and successful cleanup of every declared fixture.
+
+For `configured-v2`, workers also advertise `configuredWorkflowVersion: 2` and
+`configuredWorkflowDigest`. The same fields appear in the direct-start `worker`
+object. The authored plan is frozen in `testSnapshot.workflow`. The response
+records `steps[].apiObservations` with method, resolved path, status, and optional
+session. Passing steps require the HTTP statuses declared in the frozen plan.
+
+Workers also advertise `buildRecipeVersion: 1` on improvement and case claim
+requests. A recipe-backed job records the authorized `recipe` ID and version.
+Improvement launch reports must supply `buildReceipt` with the recipe reference,
+`recipeDigest`, and `artifactDigest`. A linked rerun target carries the same
+receipt. Case validation targets include the recipe receipt and match any shared
+build attribution. Legacy records can lack these fields.
 
 Health also reports `instanceId`, `processId` and `dataPath` for local launcher
 ownership checks. It includes no credentials. Database ownership is acquired
 before RunStore recovery, independently of HTTP port ownership.
+
+## Completion example
 
 ```json
 {
@@ -98,7 +157,7 @@ worker's permission policy or repository configuration.
 | POST | `/api/jobs/{id}/draft` | Save `{ "prompt": "...", "revision": 1 }`. |
 | POST | `/api/jobs/{id}/start` | Explicitly queue the saved revision. |
 | POST | `/api/jobs/{id}/cancel` | Request cancellation; cancel drafts/queued jobs immediately. |
-| POST | `/api/worker/jobs/claim` | Oldest queued job, original run and private lease, or 204. |
+| POST | `/api/worker/jobs/claim` | Oldest compatible queued job, original run and private lease, or 204. |
 | POST | `/api/jobs/{id}/heartbeat` | Renew `{ "lease": "..." }`; returns cancellation state. |
 | POST | `/api/jobs/{id}/report` | Append an event and advance a valid execution stage. |
 | POST | `/api/jobs/{id}/rerun` | Create and claim the linked regression run atomically. |
@@ -117,14 +176,15 @@ Thread/worktree and a distinct result commit are required before building. Recor
 identities cannot change mid-job. Leases expire in 45 seconds and are private to
 the claiming worker; stale reports and late completions are rejected.
 
-The rerun endpoint accepts `{ "lease": "...", "target": { ... } }`. Its target
+The rerun endpoint accepts `{ "lease": "...", "target": { ... }, "worker": { ... } }`. Its target
 must describe the clean result commit and recorded build version at a separate
 local instance. It returns a `RunLease` to the job worker and links both the parent
-run and improvement job. The original test snapshot is preserved and acceptance
+run and improvement job. The original manifest and test snapshot are preserved, and acceptance
 starts pending. Successful job completion requires a passing linked rerun.
 
-Artifact names are limited to `codex.log`, `build.log`, `launch.log`, `diff.patch`
-and `summary.json`. Original feedback and run evidence remain available separately.
+Job artifact names are limited to `codex.log`, `build.log`, `launch.log`, `diff.patch`,
+`summary.json`, and `build-receipt.json`. Original feedback and run evidence remain
+available separately.
 
 ## Operational routes (schema 4)
 

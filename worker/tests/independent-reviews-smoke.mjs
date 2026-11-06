@@ -1,3 +1,4 @@
+import { workerClaim } from '../src/run-execution.mjs';
 // Actual queue worker, owned run children and browsers; disposable demo only.
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
@@ -58,12 +59,12 @@ try{
  // Direct owned session makes an abrupt review-process exit testable without
  // selecting a PID from user input or exposing a browser debugging port.
  sessions=new RunSessions({dashboardUrl:origin,dataPath,headless:true,keepBrowserOpen:true,runTimeoutMs:10000});
- const interrupted=await queue(true),interruptedClaim=await api(origin,'/api/worker/claim',{supportsStepControl:true});
+ const interrupted=await queue(true),interruptedClaim=await api(origin,'/api/worker/claim',workerClaim);
  const interruptedExecution=sessions.execute(interruptedClaim);
  await until(async()=>(await state(interrupted.id)).canAdvance,'Disposable interruption test did not pause');
  await stopProcess(sessions.entries.get(interrupted.id).child);
  assert.equal((await interruptedExecution).status,'interrupted');assert.equal((await stored(interrupted.id)).acceptance,'pending');
- const crashed=await queue(),claim=await api(origin,'/api/worker/claim',{supportsStepControl:true});assert.equal(claim.run.id,crashed.id);
+ const crashed=await queue(),claim=await api(origin,'/api/worker/claim',workerClaim);assert.equal(claim.run.id,crashed.id);
  assert.equal((await sessions.execute(claim)).status,'passed');await review(crashed.id);const crashFrozen=await frozen(crashed.id);
  await stopProcess(sessions.entries.get(crashed.id).child);await until(()=>sessions.entries.size===0,'Exited review child remained registered');assert.deepEqual(await frozen(crashed.id),crashFrozen);
  await sessions.stop();sessions=null;

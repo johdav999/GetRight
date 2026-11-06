@@ -8,7 +8,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
 import { api, repositoryRoot } from '../src/settings.mjs';
-import { executeRun } from '../src/runner.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 import { createWriterAppContractHost } from './writerapp-contract-host.mjs';
 
 const portProbe = createServer();
@@ -19,7 +19,8 @@ const origin = `http://127.0.0.1:${port}`;
 const dataPath = path.join(repositoryRoot, '.local', `smoke-${Date.now()}`);
 await mkdir(dataPath, { recursive: true });
 // Exercise the schema-1 upgrade with a legacy record that has no target/identity.
-const legacyTest = JSON.parse(await readFile(path.join(repositoryRoot, 'config/catalog.json'), 'utf8')).tests[0];
+const configuredCatalogue = JSON.parse(await readFile(path.join(repositoryRoot, 'config/catalog.json'), 'utf8'));
+const legacyTest = configuredCatalogue.tests[0];
 const legacyRun = { id: 'a'.repeat(32), testId: legacyTest.id, applicationId: 'getright', status: 'failed', acceptance: 'pending', createdAt: new Date().toISOString(), startedAt: null, completedAt: new Date().toISOString(), fixtureId: `uat-${'a'.repeat(32)}`, buildVersion: null, baseUrl: null, steps: [], trace: null, error: 'Legacy fixture', testSnapshot: legacyTest };
 const legacyDb = new DatabaseSync(path.join(dataPath, 'getright.db'));
 legacyDb.exec('CREATE TABLE runs(id TEXT PRIMARY KEY,payload TEXT NOT NULL,lease TEXT); CREATE TABLE feedback(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),payload TEXT NOT NULL); PRAGMA user_version=1;');
@@ -59,10 +60,25 @@ async function rejected(route, body, status = 400) {
 
 try {
   await start();
-  assert.equal((await api(origin, `/api/runs/${legacyRun.id}`)).error, 'Legacy fixture');
+  const legacy = await api(origin, `/api/runs/${legacyRun.id}`);
+  assert.equal(legacy.error, 'Legacy fixture');
+  assert.equal(legacy.configuration, null, 'Migration must not invent configuration attribution.');
   const catalog = await api(origin, '/api/catalog');
-  assert.equal(catalog.tests.length, 7);
+  assert.deepEqual(catalog.tests.map(test => test.id), configuredCatalogue.tests.map(test => test.id));
   assert.equal(catalog.tests.filter(t => t.applicationId === 'writerapp').length, 5);
+  const financeCases = catalog.tests.filter(test => test.id.startsWith('virtual-company-finance-'));
+  assert.equal(financeCases.length, 6);
+  for (const test of financeCases) {
+    assert.equal(test.applicationId, 'virtual-company');
+    assert.equal(test.readiness, 'draft');
+    assert.equal(test.adapter, 'configured-v2');
+    assert.ok(test.preconditions && test.steps.every(step => step.expected));
+    assert.deepEqual(test.workflow.steps.map(step => step.stepId), test.steps.map(step => step.id));
+    const readiness = await api(origin, `/api/tests/${test.id}/implementation-readiness`);
+    assert.equal(readiness.allowed, false);
+    assert.match(readiness.message, /authored workflow/);
+    await rejected('/api/runs', { testId: test.id });
+  }
   await rejected('/api/runs', { testId: 'writerapp-create-save' });
   const crossOrigin = await fetch(`${origin}/api/worker/claim`, { method: 'POST', headers: { Origin: 'http://untrusted.example' } });
   assert.equal(crossOrigin.status, 403);
@@ -74,15 +90,15 @@ try {
   await page.goto(origin);
   await expect(page.getByRole('heading', { name: 'Test control room', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Run UAT test' }).first()).toBeEnabled();
-  assert.equal(await page.getByRole('button', { name: 'Run UAT test' }).count(), 7);
-  assert.equal(await page.locator('button.run-button:disabled').count(), 6);
+  await expect(page.getByRole('button', { name: 'Run UAT test' })).toHaveCount(configuredCatalogue.tests.length);
+  await expect(page.locator('button.run-button:enabled')).toHaveCount(1);
   await page.screenshot({ path: path.join(dataPath, 'dashboard-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'Run UAT test' }).first().click();
   await expect(page.getByRole('region', { name: 'Test case in this run' })).toContainText('Waiting for the local worker');
   const [run] = await api(origin, '/api/runs');
   assert.equal(run.acceptance, 'pending');
   await rejected(`/api/runs/${run.id}/review`, { acceptance: 'accepted' });
-  const claims = await Promise.all([api(origin, '/api/worker/claim', {}), api(origin, '/api/worker/claim', {})]);
+  const claims = await Promise.all([api(origin, '/api/worker/claim', workerClaim), api(origin, '/api/worker/claim', workerClaim)]);
   assert.equal(claims.filter(Boolean).length, 1, 'a queued run must only be claimed once');
   const claim = claims.find(Boolean);
   await rejected(`/api/runs/${run.id}/complete`, { lease: 'invalid', status: 'passed' });
@@ -103,6 +119,8 @@ try {
   assert.equal((await fetch(`${origin}/api/evidence/${run.id}/unregistered.png`)).status, 404);
   await rejected(`/api/runs/${run.id}/feedback`, { stepId: 'unknown', comment: 'Feedback', requestedOutcome: 'Outcome' });
   await page.goto(`${origin}/runs/${run.id}`);
+  await page.getByText('Run configuration', { exact: true }).click();
+  await expect(page.getByText(run.configuration.workflowDigest.slice(0, 12), { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Accept this run', exact: true })).toBeEnabled();
   await page.getByLabel('Test step', { exact: true }).selectOption('save');
   await page.getByLabel('What needs improving?', { exact: true }).fill('The saved confirmation could be easier to notice.');
@@ -153,6 +171,7 @@ try {
   await page.getByLabel('Expected build version', { exact: true }).fill(profile.expectedBuildVersion);
   await page.getByLabel('Dedicated UAT account ID', { exact: true }).fill(profile.expectedUserId);
   await page.getByRole('checkbox', { name: 'This instance uses isolated UAT data' }).check();
+  await page.getByRole('button', { name: 'Save setup', exact: true }).click();
   await page.getByRole('button', { name: 'Check connection', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Ready:');
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile setup must not overflow');
@@ -172,7 +191,7 @@ try {
   await rejected('/api/runs', { testId: 'writerapp-create-save' });
   writerHost.state.userId = profile.expectedUserId;
   const writerRun = await api(origin, '/api/runs', { testId: 'writerapp-create-save' });
-  const writerClaim = await api(origin, '/api/worker/claim', {});
+  const writerClaim = await api(origin, '/api/worker/claim', workerClaim);
   const evidenceDirectory = path.join(dataPath, 'evidence', writerRun.id);
   await mkdir(evidenceDirectory, { recursive: true });
   for (const step of writerRun.testSnapshot.steps) await writeFile(path.join(evidenceDirectory, `${step.id}.png`), 'contract placeholder');
@@ -189,25 +208,35 @@ try {
   assert.equal(writerResult.status, 'passed', writerResult.error);
   assert.equal(writerResult.target.expectedBuildVersion, profile.expectedBuildVersion);
   assert.equal(writerResult.identity.userId, profile.expectedUserId);
+  assert.deepEqual(writerResult.identity.resources, [{ kind: 'document', id: writerResult.identity.documentId, scopeId: null }]);
+  assert.deepEqual(writerResult.configuration, writerRun.configuration, 'Editing the live profile must not change the frozen configuration.');
   assert.equal(writerResult.acceptance, 'pending');
   assert.equal(writerHost.state.creates, 1);
   await api(origin, '/api/applications/writerapp/profile', profile);
   const wrongAccountRun = await api(origin, '/api/runs', { testId: 'writerapp-create-save' });
-  const wrongAccountClaim = await api(origin, '/api/worker/claim', {});
+  const wrongAccountClaim = await api(origin, '/api/worker/claim', workerClaim);
   writerHost.state.userId = 'different-account-after-queue';
   const refused = await executeRun(wrongAccountClaim, configuration);
   assert.equal(refused.id, wrongAccountRun.id); assert.equal(refused.status, 'failed');
   assert.equal(writerHost.state.creates, 1, 'account drift after queueing must not create data');
   writerHost.state.userId = profile.expectedUserId;
 
+  const incompatible = await api(origin, '/api/runs', { testId: 'writerapp-create-save' });
+  const incompatibleClaim = await api(origin, '/api/worker/claim', { ...workerClaim, workflowEngineDigest: '0'.repeat(64) });
+  const incompatibleResult = await executeRun(incompatibleClaim, configuration);
+  assert.equal(incompatibleResult.id, incompatible.id);
+  assert.equal(incompatibleResult.status, 'failed');
+  assert.match(incompatibleResult.error, /incompatible with this worker/);
+  assert.equal(writerHost.state.creates, 1, 'An engine mismatch between claim and execution must stop before creating fixtures.');
+
   const rerun = await api(origin, '/api/runs', { testId: run.testId });
   assert.equal(rerun.acceptance, 'pending');
-  const failedClaim = await api(origin, '/api/worker/claim', {});
+  const failedClaim = await api(origin, '/api/worker/claim', workerClaim);
   const failed = await api(origin, `/api/runs/${rerun.id}/complete`, { lease: failedClaim.lease, status: 'failed', steps: [], error: 'Deliberate infrastructure failure for smoke verification.' });
   assert.equal(failed.status, 'failed'); assert.equal(failed.acceptance, 'pending');
   await rejected(`/api/runs/${rerun.id}/complete`, { lease: failedClaim.lease, status: 'passed' });
   const interrupted = await api(origin, '/api/runs', { testId: run.testId });
-  const interruptedClaim = await api(origin, '/api/worker/claim', {});
+  const interruptedClaim = await api(origin, '/api/worker/claim', workerClaim);
   assert.equal(interruptedClaim.run.id, interrupted.id);
   await browser.close(); browser = null;
   await stop(); await start();

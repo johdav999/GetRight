@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { repositoryRoot, localUrl, api } from '../src/settings.mjs';
-import { executeRun } from '../src/runner.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 
 const receiptPath = process.argv[2];
 if (!receiptPath) throw new Error('Pass the build-receipt.json path printed by scripts/start-writerapp.ps1.');
@@ -33,7 +33,7 @@ try {
   const readiness = await api(origin, '/api/applications/writerapp/readiness');
   assert(readiness.ready, readiness.message);
   const run = await api(origin, '/api/runs', { testId: 'writerapp-create-save' });
-  const claim = await api(origin, '/api/worker/claim', {}); assert.equal(claim.run.id, run.id);
+  const claim = await api(origin, '/api/worker/claim', workerClaim); assert.equal(claim.run.id, run.id);
   const result = await executeRun(claim, { dashboardUrl: origin, dataPath, headless: true });
   await writeFile(path.join(dataPath, 'live-report.json'), JSON.stringify({ scope: 'Actual local WriterApp build and new isolated SQLite database; development test identity; no provider, external authentication or multi-user acceptance.', sourceCommit: target.sourceCommit, sourceWasDirty: target.sourceWasDirty, result }, null, 2));
   assert.equal(result.status, 'passed', `${result.error}\nEvidence: ${dataPath}`);

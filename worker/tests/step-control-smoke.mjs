@@ -6,10 +6,10 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {chromium,expect} from '@playwright/test';
 import {api,repositoryRoot} from '../src/settings.mjs';
 import {dashboardHost} from './dashboard-host.mjs';
-import {executeRun} from '../src/runner.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 
 const dataPath=path.join(repositoryRoot,'.local',`step-control-${Date.now()}`),dashboard=await dashboardHost(dataPath),origin=dashboard.origin;
-const get=route=>api(origin,route),claim=()=>api(origin,'/api/worker/claim',{supportsStepControl:true});
+const get=route=>api(origin,route),claim=()=>api(origin,'/api/worker/claim',workerClaim);
 const queue=()=>api(origin,'/api/runs',{testId:'getright-save-note',docked:true,stepByStep:true});
 const reject=async(route,body)=>{const r=await fetch(origin+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});assert.equal(r.status,400,await r.text());};
 const report={scope:'Step-by-step/automatic execution, same session and immutable evidence; disposable demo only',flows:[]};
@@ -115,7 +115,7 @@ try{
  await page.getByLabel('Execution mode for next run',{exact:true}).selectOption('automatic');await page.getByRole('button',{name:'Run again',exact:true}).click();
  await expect(page).not.toHaveURL(`${origin}/runs/${run.id}`);
  const [automatic]=await get('/api/runs');assert.equal(automatic.stepByStep,false);
- const auto=await executeRun(await api(origin,'/api/worker/claim',{}),{dashboardUrl:origin,dataPath,headless:true,keepBrowserOpen:false});assert.equal(auto.status,'passed',auto.error);assert.equal(auto.acceptance,'pending');
+ const auto=await executeRun(await api(origin,'/api/worker/claim',workerClaim),{dashboardUrl:origin,dataPath,headless:true,keepBrowserOpen:false});assert.equal(auto.status,'passed',auto.error);assert.equal(auto.acceptance,'pending');
  assert(!auto.assistedSteps?.length);
  report.flows.push({name:'One step per release, duplicate/stale request protection, reconnect, pause budget, full evidence, pending acceptance, mobile and automatic rerun',runId:run.id,status:'verified'});
 

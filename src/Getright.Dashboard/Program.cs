@@ -82,15 +82,28 @@ app.MapPost("/api/applications/{id}/profile", (string id, ApplicationProfile pro
     return store.SaveProfile(profile);
 });
 app.MapGet("/api/applications/{id}/readiness", (string id, ApplicationSetup setup, CancellationToken cancellationToken) => setup.Check(id, cancellationToken));
-app.MapPost("/api/worker/claim", (WorkerClaimRequest? request, RunStore store) => store.Claim(request?.WorkflowEngineDigest, request?.SupportsStepControl ?? false) is { } lease ? Results.Ok(lease) : Results.NoContent());
+app.MapGet("/api/applications/{id}/manifest", (string id, RunStore store) => store.Manifests.Get(id));
+app.MapPost("/api/applications/{id}/manifest", (string id, DefinitionEdit request, RunStore store) => store.SaveManifest(id, request));
+app.MapGet("/api/applications/{id}/recipes", (string id, RunStore store) => store.RecipeOptions(id));
+app.MapPost("/api/applications/{id}/preview", (string id, ApplicationProfile profile, ApplicationSetup setup, CancellationToken cancellationToken) =>
+{
+    if (id != profile.ApplicationId) throw new ArgumentException("The profile belongs to a different application.");
+    return setup.Preview(profile, cancellationToken);
+});
+app.MapGet("/api/applications/{id}/workflows", (string id, RunStore store) => store.ManagedWorkflows(id));
+app.MapPost("/api/applications/{id}/workflows", (string id, DefinitionEdit request, RunStore store) => store.SaveWorkflow(id, request));
+app.MapGet("/api/tests/{id}/qualification", (string id, RunStore store) => store.Qualification(id));
+app.MapPost("/api/tests/{id}/qualify", async (string id, ApplicationSetup setup, CancellationToken cancellationToken) =>
+    Results.Created("/api/runs", await setup.Queue(id, cancellationToken, qualification: true)));
+app.MapPost("/api/worker/claim", (WorkerClaimRequest? request, RunStore store) => store.Claim(request) is { } lease ? Results.Ok(lease) : Results.NoContent());
 app.MapGet("/api/case-implementations", (string? test, RunStore store) => store.CaseJobs(test));
 app.MapGet("/api/case-implementations/{id}", (string id, RunStore store) => store.CaseJob(id));
 app.MapPost("/api/tests/{id}/approve-implementation", (string id, ApproveCaseRequest request, ApplicationSetup setup, CancellationToken cancellationToken) => setup.ApproveCase(id, request, cancellationToken));
 app.MapGet("/api/tests/{id}/implementation-readiness", (string id, RunStore store) => store.ImplementationReadiness(id));
 app.MapPost("/api/case-implementations/{id}/retry", (string id, ApproveCaseRequest request, ApplicationSetup setup, CancellationToken cancellationToken) => setup.RetryCase(id, request, cancellationToken));
 app.MapPost("/api/tests/{id}/disable-implementation", (string id, RunStore store) => store.DisableCase(id));
-app.MapPost("/api/worker/case-implementations/claim", (RunStore store) => store.ClaimCaseJob() is { } lease ? Results.Ok(lease) : Results.NoContent());
-app.MapPost("/api/worker/case-implementations/claim-batch", (RunStore store) => store.ClaimCaseBatch() is { } batch ? Results.Ok(batch) : Results.NoContent());
+app.MapPost("/api/worker/case-implementations/claim", (WorkerClaimRequest? request, RunStore store) => store.ClaimCaseJob(request) is { } lease ? Results.Ok(lease) : Results.NoContent());
+app.MapPost("/api/worker/case-implementations/claim-batch", (WorkerClaimRequest? request, RunStore store) => store.ClaimCaseBatch(request) is { } batch ? Results.Ok(batch) : Results.NoContent());
 app.MapPost("/api/case-implementations/{id}/heartbeat", (string id, JobLeaseRequest request, RunStore store) => store.HeartbeatCaseJob(id, request.Lease));
 app.MapPost("/api/case-implementations/{id}/report", (string id, CaseImplementationReport request, RunStore store) => store.ReportCaseJob(id, request));
 app.MapPost("/api/case-implementations/{id}/validate", (string id, CaseValidationRequest request, RunStore store) => store.CreateCaseValidation(id, request));
@@ -127,7 +140,7 @@ app.MapGet("/api/jobs/{id}", (string id, RunStore store) => store.Job(id));
 app.MapPost("/api/jobs/{id}/draft", (string id, EditJobRequest request, RunStore store) => store.EditJob(id, request));
 app.MapPost("/api/jobs/{id}/start", (string id, StartJobRequest request, RunStore store) => store.StartJob(id, request.Revision));
 app.MapPost("/api/jobs/{id}/cancel", (string id, RunStore store) => store.CancelJob(id));
-app.MapPost("/api/worker/jobs/claim", (RunStore store) => store.ClaimJob() is { } claim ? Results.Ok(claim) : Results.NoContent());
+app.MapPost("/api/worker/jobs/claim", (WorkerClaimRequest? request, RunStore store) => store.ClaimJob(request) is { } claim ? Results.Ok(claim) : Results.NoContent());
 app.MapPost("/api/jobs/{id}/heartbeat", (string id, JobLeaseRequest request, RunStore store) => store.HeartbeatJob(id, request.Lease));
 app.MapPost("/api/jobs/{id}/report", (string id, JobReport request, RunStore store) => store.ReportJob(id, request));
 app.MapPost("/api/jobs/{id}/rerun", (string id, JobRerunRequest request, RunStore store) => store.CreateJobRerun(id, request));

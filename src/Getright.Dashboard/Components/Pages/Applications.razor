@@ -1,59 +1,282 @@
 @page "/applications"
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using Microsoft.AspNetCore.Components.Forms
 @inject RunStore Store
+@inject UatCatalogue Catalogue
 @inject ApplicationSetup Setup
 
 <PageTitle>Application setup · Getright</PageTitle>
 <div class="topbar"><a href="/">Test control room</a><span>Application setup</span></div>
-<header class="page-header"><div><p class="eyebrow">LOCAL APPLICATIONS</p><h1>Application setup</h1><p class="muted">Connect a local test instance before running a real application workflow.</p></div></header>
-<section class="panel setup-panel">
-    <div class="panel-heading"><div><h2>@(applicationId == "writerapp" ? "WriterApp" : "Virtual Company")</h2><p>Connect the isolated instance using its launch receipt.</p></div></div>
+<header class="page-header"><div><p class="eyebrow">LOCAL APPLICATIONS</p><h1>Application setup</h1><p class="muted">Bind an isolated instance and qualify authored workflows.</p></div></header>
+<section class="panel setup-panel" aria-label="Target binding">
+    <div class="panel-heading"><div><h2>@applications.FirstOrDefault(item => item.Id == applicationId)?.Name</h2><p>Connect the isolated instance using its launch receipt.</p></div></div>
     <div class="setup-form">
-        <label for="application">Application</label><select id="application" @bind="applicationId" @bind:after="Load" disabled="@(busy || !RendererInfo.IsInteractive)"><option value="writerapp">WriterApp</option><option value="virtual-company">Virtual Company</option></select>
-        <p>Use an isolated development instance with automatic test sign-in. Getright checks the running build and account before creating data.</p>
-        <label for="base-url">Local application URL</label><input id="base-url" @bind="baseUrl" disabled="@(busy || !RendererInfo.IsInteractive)" placeholder="http://localhost:5387" />
-        <label for="build-version">Expected build version</label><input id="build-version" @bind="buildVersion" disabled="@(busy || !RendererInfo.IsInteractive)" placeholder="Version reported by the intended local build" />
-        <small>The instance must report this exact version. Use a distinct version for each build you compare.</small>
-        <label for="test-account">Dedicated UAT account ID</label><input id="test-account" @bind="userId" disabled="@(busy || !RendererInfo.IsInteractive)" placeholder="getright-uat" />
-        @if (applicationId == "virtual-company")
-        { <label for="reference-company">Reference company ID</label><input id="reference-company" @bind="companyId" disabled="@(busy || !RendererInfo.IsInteractive)" /><p class="muted">The owner role and this reference company are checked before each run.</p> }
-        <label for="source-commit">Clean source commit from launch receipt</label><input id="source-commit" @bind="sourceCommit" disabled="@(busy || !RendererInfo.IsInteractive)" />
-        <label class="checkbox-label"><input type="checkbox" @bind="sourceWasDirty" disabled="@(busy || !RendererInfo.IsInteractive)" /> Source had uncommitted changes (implementation jobs stay disabled).</label>
-        <label class="checkbox-label"><input type="checkbox" @bind="isolated" disabled="@(busy || !RendererInfo.IsInteractive)" /> This instance uses isolated UAT data and a dedicated test account.</label>
-        <div class="review-actions"><button disabled="@(busy || !RendererInfo.IsInteractive)" @onclick="Save">Save setup</button><button class="secondary" disabled="@(busy || !RendererInfo.IsInteractive)" @onclick="Check">Check connection</button><a href="/">Return to tests</a></div>
-        @if (message is not null) { <p role="status" class="@(ready ? "success-text" : "muted")">@message</p> }
+        <label for="application">Application</label>
+        <select id="application" @bind="applicationId" @bind:after="Load" disabled="@Disabled">
+            @foreach (var application in applications) { <option value="@application.Id">@application.Name</option> }
+        </select>
+        <label for="base-url">Local application URL</label><input id="base-url" @bind="baseUrl" @bind:after="ClearPreview" disabled="@Disabled" placeholder="http://localhost:5387" />
+        <label for="build-version">Expected build version</label><input id="build-version" @bind="buildVersion" @bind:after="ClearPreview" disabled="@Disabled" />
+        <small>The running instance must report this exact version.</small>
+        <label for="test-account">Dedicated UAT account ID</label><input id="test-account" @bind="userId" @bind:after="ClearPreview" disabled="@Disabled" />
+        @if (Scoped)
+        {
+            <label for="reference-company">Reference company ID</label><input id="reference-company" @bind="scopeId" @bind:after="ClearPreview" disabled="@Disabled" />
+            <p class="muted">The registered fixture requires the owner role in this reference company.</p>
+        }
+        <label for="source-commit">Clean source commit from launch receipt</label><input id="source-commit" @bind="sourceCommit" @bind:after="ClearPreview" disabled="@Disabled" />
+        <label class="checkbox-label"><input type="checkbox" @bind="sourceWasDirty" @bind:after="ClearPreview" disabled="@Disabled" /> Source had uncommitted changes.</label>
+        <label class="checkbox-label"><input type="checkbox" @bind="isolated" @bind:after="ClearPreview" disabled="@Disabled" /> This instance uses isolated UAT data and a dedicated test account.</label>
+        <div class="review-actions">
+            <button disabled="@Disabled" @onclick="Save">Save setup</button>
+            <button class="secondary" disabled="@Disabled" @onclick="Check">Check connection</button>
+            <a href="/">Return to tests</a>
+        </div>
+        <small>Check connection previews the current fields. Save setup to use them for runs.</small>
+        @if (message is not null) { <p role="status" class="@(preview?.Readiness.Ready == true ? "success-text" : "muted")">@message</p> }
         @if (error is not null) { <p role="alert" class="error-text">@error</p> }
+        @if (preview is { } result)
+        {
+            <section class="setup-preview" aria-label="Preflight preview">
+                <h3>Preflight preview</h3>
+                @if (result.BaseUrl is { } url)
+                {
+                    <dl class="metadata">
+                        <div><dt>Target</dt><dd>@url</dd></div>
+                        <div><dt>Expected build</dt><dd>@result.ExpectedBuild</dd></div>
+                        <div><dt>Verified build</dt><dd>@(result.Readiness.RunningVersion ?? "Unavailable")</dd></div>
+                        <div><dt>Fixture adapter</dt><dd>@result.FixtureAdapter</dd></div>
+                        @if (result.Scope is { } scope) { <div><dt>Scope and role</dt><dd>@scope · @result.Role</dd></div> }
+                    </dl>
+                    <ul aria-label="Test identities">@foreach (var identity in result.Identities) { <li>@identity.Name · @identity.Subject · @identity.Mode</li> }</ul>
+                    @if (result.Fixtures.Length > 0)
+                    { <ul aria-label="Planned fixtures">@foreach (var fixture in result.Fixtures) { <li>@fixture.Kind using @fixture.Identity</li> }</ul> }
+                }
+                <dl class="setup-capabilities">
+                    @foreach (var capability in result.Capabilities)
+                    { <div><dt>@capability.Name · @capability.State</dt><dd>@capability.Detail</dd></div> }
+                </dl>
+            </section>
+        }
     </div>
 </section>
-<div class="notice">Synopsis, edit/reopen, sharing and save-failure recovery are the remaining milestone 1 adapters. Virtual Company currently supports test-company creation and draft permissions.</div>
+
+<section class="panel setup-panel" aria-label="Application definition">
+    <div class="panel-heading"><div><h2>Application definition</h2><p>Manifest revision @manifest?.Revision</p></div></div>
+    <div class="setup-form">
+        @if (Store.ManifestWarning(applicationId) is { } warning) { <p class="notice">@warning</p> }
+        <label for="build-recipe">Implementation recipe</label>
+        <select id="build-recipe" @bind="recipeKey" @bind:after="SelectRecipe" disabled="@Disabled">
+            <option value="">Testing only</option>
+            @if (manifest?.BuildRecipe is { } savedRecipe && !recipes.Recipes.Contains(savedRecipe))
+            { <option value="@RecipeKey(savedRecipe)" disabled>@savedRecipe.Id v@(savedRecipe.Version) (worker authorization unavailable)</option> }
+            @foreach (var recipe in recipes.Recipes) { <option value="@RecipeKey(recipe)">@recipe.Id v@(recipe.Version)</option> }
+        </select>
+        @if (recipes.Error is { } recipeError) { <p class="muted">@recipeError</p> }
+        <details class="definition-editor">
+            <summary>Edit or import manifest JSON</summary>
+            <label for="manifest-file">Manifest JSON file</label><InputFile id="manifest-file" accept=".json,application/json" OnChange="args => ReadFile(args, true)" disabled="@Disabled" />
+            <label for="manifest-json">Manifest JSON</label><textarea id="manifest-json" rows="14" maxlength="65536" spellcheck="false" @bind="manifestJson" disabled="@Disabled"></textarea>
+            <small>Use credential references authorized by the installed manifest. Worker configuration controls commands and repositories.</small>
+        </details>
+        <div class="review-actions"><button @onclick="SaveManifest" disabled="@Disabled">Save manifest</button><button class="secondary" @onclick="LoadManifest" disabled="@Disabled">Reload manifest</button></div>
+        @if (manifestMessage is not null) { <p role="status">@manifestMessage</p> }
+        @if (manifestError is not null) { <p role="alert" class="error-text">@manifestError</p> }
+    </div>
+</section>
+
+<section class="panel setup-panel" aria-label="Workflow definitions">
+    <div class="panel-heading"><div><h2>Workflow definitions</h2><p>Import a version 2 workflow and record two consecutive passing qualification runs.</p></div></div>
+    <div class="setup-form">
+        <label for="managed-workflow">Workflow</label>
+        <select id="managed-workflow" @bind="workflowId" @bind:after="LoadWorkflow" disabled="@Disabled">
+            <option value="">Import a new workflow</option>
+            @foreach (var workflow in workflows) { <option value="@workflow.Test.Id">@workflow.Test.Title (revision @workflow.Revision)</option> }
+        </select>
+        <details class="definition-editor">
+            <summary>Edit or import workflow JSON</summary>
+            <label for="workflow-file">Workflow JSON file</label><InputFile id="workflow-file" accept=".json,application/json" OnChange="args => ReadFile(args, false)" disabled="@Disabled" />
+            <label for="workflow-json">Workflow JSON</label><textarea id="workflow-json" rows="14" maxlength="65536" spellcheck="false" @bind="workflowJson" disabled="@Disabled"></textarea>
+            <small>Keep the test ID and ordered step IDs when revising a workflow.</small>
+        </details>
+        <div class="review-actions"><button @onclick="SaveWorkflow" disabled="@Disabled">Save workflow</button></div>
+        @if (workflowMessage is not null) { <p role="status">@workflowMessage</p> }
+        @if (workflowError is not null) { <p role="alert" class="error-text">@workflowError</p> }
+        @if (qualification is { } state)
+        {
+            <div class="setup-preview" aria-label="Workflow qualification">
+                <h3>@(state.Qualified ? "Qualified" : "Qualification required")</h3><p>@state.Message</p>
+                <div class="review-actions">
+                    <button @onclick="Qualify" disabled="@(Disabled || state.Qualified || savedProfile is null || state.Attempts.Any(attempt => attempt.Status is "queued" or "running"))">Run qualification</button>
+                    <button class="secondary" @onclick="RefreshQualification" disabled="@Disabled">Refresh qualification</button>
+                </div>
+                @if (state.Attempts.Length > 0)
+                {
+                    <ul>
+                        @foreach (var attempt in state.Attempts)
+                        { <li><a href="/runs/@attempt.RunId">Qualification run @attempt.RunId[..8]</a> · @Home.Label(attempt.Status) · Acceptance @Home.Label(attempt.Acceptance)</li> }
+                    </ul>
+                }
+            </div>
+        }
+    </div>
+</section>
 
 @code {
-    private string applicationId = "writerapp", companyId = "", sourceCommit = "";
-    private bool sourceWasDirty;
-    private string baseUrl = "http://localhost:5387", buildVersion = "", userId = "dev-oid";
-    private bool isolated, busy, ready;
-    private string? message, error;
-    protected override void OnInitialized() => Load();
+    private static readonly JsonSerializerOptions EditorJson = new(AppJson.Options) { WriteIndented = true };
+    private List<UatApplication> applications = [];
+    private string applicationId = "", scopeId = "", sourceCommit = "", baseUrl = "", buildVersion = "", userId = "";
+    private bool isolated, sourceWasDirty, busy;
+    private string? message, error, manifestMessage, manifestError, workflowMessage, workflowError;
+    private ApplicationProfile? savedProfile;
+    private ApplicationManifest? manifest;
+    private ApplicationPreview? preview;
+    private RecipeChoices recipes = new([]);
+    private string manifestJson = "", recipeKey = "", workflowId = "", workflowJson = "";
+    private List<LocalWorkflow> workflows = [];
+    private int workflowRevision;
+    private WorkflowQualification? qualification;
+    private bool Disabled => busy || !RendererInfo.IsInteractive;
+    private bool Scoped => manifest is not null && ApplicationManifests.Scoped(manifest);
+
+    protected override void OnInitialized()
+    {
+        applications = Catalogue.Value.Applications.Where(app => ApplicationManifests.NeedsTarget(Store.Manifests.Get(app.Id))).ToList();
+        applicationId = applications[0].Id;
+        Load();
+    }
+
     private void Load()
     {
-        var profile = Store.Profile(applicationId);
-        baseUrl = profile?.BaseUrl ?? "http://localhost:5387"; buildVersion = profile?.ExpectedBuildVersion ?? ""; userId = profile?.ExpectedUserId ?? (applicationId == "writerapp" ? "dev-oid" : ""); isolated = profile?.IsolatedDataConfirmed ?? false;
-        companyId = profile?.ExpectedCompanyId ?? ""; sourceCommit = profile?.SourceCommit ?? ""; sourceWasDirty = profile?.SourceWasDirty ?? false; message = error = null; ready = false;
+        savedProfile = Store.Profile(applicationId);
+        baseUrl = savedProfile?.BaseUrl ?? "http://localhost:5387";
+        buildVersion = savedProfile?.ExpectedBuildVersion ?? ""; userId = savedProfile?.ExpectedUserId ?? "";
+        isolated = savedProfile?.IsolatedDataConfirmed ?? false; scopeId = savedProfile?.ExpectedCompanyId ?? "";
+        sourceCommit = savedProfile?.SourceCommit ?? ""; sourceWasDirty = savedProfile?.SourceWasDirty ?? false;
+        ClearPreview(); LoadManifest();
+        workflows = Store.ManagedWorkflows(applicationId);
+        workflowId = workflows.FirstOrDefault()?.Test.Id ?? "";
+        LoadWorkflow();
     }
+
+    private void ClearPreview() { preview = null; message = error = null; }
+
+    private ApplicationProfile Binding()
+    {
+        var binding = new ApplicationProfile(applicationId, baseUrl.Trim(), buildVersion.Trim(), userId.Trim(), isolated,
+            string.IsNullOrWhiteSpace(sourceCommit) ? null : sourceCommit.Trim(), sourceWasDirty,
+            Scoped ? scopeId.Trim() : null, Scoped ? "owner" : null);
+        if (savedProfile?.BuildReceipt is { } receipt && binding == (savedProfile with { BuildReceipt = null }))
+            return binding with { BuildReceipt = receipt };
+        return binding;
+    }
+
     private void Save()
+    {
+        ClearPreview();
+        try
+        {
+            savedProfile = Store.SaveProfile(Binding());
+            baseUrl = savedProfile.BaseUrl; buildVersion = savedProfile.ExpectedBuildVersion; userId = savedProfile.ExpectedUserId;
+            message = "Setup saved. Check the connection before running a test.";
+            RefreshQualification();
+        }
+        catch (ArgumentException exception) { error = exception.Message; }
+    }
+
+    private async Task Check()
+    {
+        ClearPreview(); busy = true;
+        try { preview = await Setup.Preview(Binding()); message = preview.Readiness.Message; }
+        catch (ArgumentException exception) { error = exception.Message; }
+        finally { busy = false; }
+    }
+
+    private static string RecipeKey(BuildRecipeReference? recipe) => recipe is null ? "" : $"{recipe.Id}@{recipe.Version}";
+
+    private void LoadManifest()
+    {
+        manifest = Store.Manifests.Get(applicationId); recipes = Store.RecipeOptions(applicationId);
+        manifestJson = JsonSerializer.Serialize(manifest, EditorJson); recipeKey = RecipeKey(manifest.BuildRecipe);
+        manifestMessage = manifestError = null;
+    }
+
+    private void SelectRecipe()
+    {
+        manifestError = null;
+        try
+        {
+            var document = JsonNode.Parse(manifestJson) as JsonObject ?? throw new JsonException();
+            var recipe = recipes.Recipes.SingleOrDefault(item => RecipeKey(item) == recipeKey);
+            document["capabilities"] = recipe is null ? new JsonArray("test") : new JsonArray("test", "implement");
+            if (recipe is null) document.Remove("buildRecipe");
+            else document["buildRecipe"] = JsonSerializer.SerializeToNode(recipe, AppJson.Options);
+            manifestJson = document.ToJsonString(EditorJson);
+        }
+        catch (JsonException) { manifestError = "Correct the manifest JSON before selecting a recipe."; }
+    }
+
+    private void SaveManifest()
+    {
+        manifestMessage = manifestError = null;
+        try
+        {
+            Store.SaveManifest(applicationId, new(manifest!.Revision, manifestJson));
+            LoadManifest(); ClearPreview(); RefreshQualification();
+            manifestMessage = "Manifest saved. Imported workflows qualify against this revision.";
+        }
+        catch (ArgumentException exception) { manifestError = exception.Message; }
+    }
+
+    private void LoadWorkflow()
+    {
+        var workflow = workflows.FirstOrDefault(item => item.Test.Id == workflowId);
+        workflowRevision = workflow?.Revision ?? 0;
+        workflowJson = workflow is null ? "" : JsonSerializer.Serialize(workflow.Test, EditorJson);
+        workflowMessage = workflowError = null;
+        RefreshQualification();
+    }
+
+    private void RefreshQualification() => qualification = string.IsNullOrEmpty(workflowId) ? null : Store.Qualification(workflowId);
+
+    private void SaveWorkflow()
+    {
+        workflowMessage = workflowError = null;
+        try
+        {
+            var workflow = Store.SaveWorkflow(applicationId, new(workflowRevision, workflowJson, string.IsNullOrEmpty(workflowId) ? null : workflowId));
+            workflows = Store.ManagedWorkflows(applicationId); workflowId = workflow.Test.Id; LoadWorkflow();
+            workflowMessage = $"Workflow revision {workflow.Revision} saved. Run qualification before using it in the control room.";
+        }
+        catch (ArgumentException exception) { workflowError = exception.Message; }
+    }
+
+    private async Task Qualify()
+    {
+        workflowMessage = workflowError = null; busy = true;
+        try
+        {
+            await Setup.Queue(workflowId, qualification: true);
+            workflowMessage = "Qualification run queued. Refresh after the worker records evidence.";
+        }
+        catch (ArgumentException exception) { workflowError = exception.Message; }
+        finally { RefreshQualification(); busy = false; }
+    }
+
+    private async Task ReadFile(InputFileChangeEventArgs args, bool isManifest)
     {
         try
         {
-            var saved = Store.SaveProfile(new ApplicationProfile(applicationId, baseUrl, buildVersion, userId, isolated, string.IsNullOrWhiteSpace(sourceCommit) ? null : sourceCommit.Trim(), sourceWasDirty, applicationId == "virtual-company" ? companyId.Trim() : null, applicationId == "virtual-company" ? "owner" : null));
-            baseUrl = saved.BaseUrl; buildVersion = saved.ExpectedBuildVersion; userId = saved.ExpectedUserId;
-            error = null; ready = false; message = "Setup saved. Check the connection before running a test.";
+            using var reader = new StreamReader(args.File.OpenReadStream(128 * 1024));
+            var json = await reader.ReadToEndAsync();
+            if (isManifest) { manifestJson = json; manifestError = null; }
+            else { workflowJson = json; workflowError = null; }
         }
-        catch (ArgumentException exception) { error = exception.Message; message = null; }
-    }
-    private async Task Check()
-    {
-        Save(); if (error is not null) return;
-        busy = true;
-        try { var result = await Setup.Check(applicationId); ready = result.Ready; message = result.Message; }
-        finally { busy = false; }
+        catch (IOException)
+        {
+            if (isManifest) manifestError = "Choose a readable JSON file smaller than 128 KiB.";
+            else workflowError = "Choose a readable JSON file smaller than 128 KiB.";
+        }
     }
 }

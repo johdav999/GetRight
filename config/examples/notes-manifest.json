@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "applicationId": "sample-notes",
+  "fixtureAdapter": "configured-v2",
+  "entryPath": "/notes",
+  "adapters": [{ "id": "configured-v2", "version": 2 }],
+  "capabilities": ["test", "implement"],
+  "buildRecipe": { "id": "sample-notes-node", "version": 1 },
+  "runtime": {
+    "version": 1,
+    "identities": [{ "name": "author", "checks": [
+      { "path": "/_getright/runtime", "assertions": [
+        { "field": "version", "binding": "build" },
+        { "field": "userId", "binding": "identity" },
+        { "field": "isolated", "equalsValue": true }
+      ] }
+    ] }],
+    "fixtures": [{ "kind": "note", "identity": "author" }]
+  }
+}

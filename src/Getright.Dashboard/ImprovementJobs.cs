@@ -8,7 +8,8 @@ public record ImprovementJob(string Id, string OriginalRunId, string FeedbackId,
     string Prompt, int Revision, string Status, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
     string? StartBlocker, string? BaseCommit = null, string? ResultCommit = null,
     string? WorktreePath = null, string? ThreadId = null, string? BuildVersion = null,
-    string? RerunId = null, string? Summary = null, string? Error = null, bool CancelRequested = false, DateTimeOffset? WorktreeRemovedAt = null);
+    string? RerunId = null, string? Summary = null, string? Error = null, bool CancelRequested = false, DateTimeOffset? WorktreeRemovedAt = null,
+    BuildRecipeReference? Recipe = null, BuildRecipeReceipt? BuildReceipt = null);
 public record JobEvent(long Sequence, DateTimeOffset CreatedAt, string Stage, string Message);
 public record CreateJobRequest(string RunId, string FeedbackId);
 public record EditJobRequest(string Prompt, int Revision);
@@ -16,9 +17,9 @@ public record StartJobRequest(int Revision);
 public record JobLeaseRequest(string Lease);
 public record JobClaim(ImprovementJob Job, UatRun OriginalRun, string Lease);
 public record JobReport(string Lease, string Stage, string Message, string? WorktreePath = null,
-    string? ThreadId = null, string? ResultCommit = null, string? BuildVersion = null, string? Summary = null);
+    string? ThreadId = null, string? ResultCommit = null, string? BuildVersion = null, string? Summary = null, BuildRecipeReceipt? BuildReceipt = null);
 public record JobFinish(string Lease, string Status, string? Error = null);
-public record JobRerunRequest(string Lease, ApplicationProfile Target);
+public record JobRerunRequest(string Lease, ApplicationProfile Target, WorkerExecution? Worker = null);
 public static class JobStates
 {
     public static bool Active(string status) => status is "preparing" or "implementing" or "building" or "launching" or "rerunning";
@@ -63,9 +64,19 @@ public sealed partial class RunStore
         cmd.Parameters.AddWithValue("$stage", job.Status); cmd.Parameters.AddWithValue("$message", message);
         cmd.ExecuteNonQuery();
     }
-    private static string? Blocker(UatRun run)
+    private BuildRecipeReference? RecipeFor(UatRun run)
     {
-        if (!ApplicationSetup.Supported(run.ApplicationId, run.TestSnapshot.Adapter))
+        var frozen = run.Configuration?.Manifest;
+        var current = Manifests.Get(run.ApplicationId);
+        if (!current.Capabilities.Contains("implement") || frozen?.Capabilities.Contains("implement") == false) return null;
+        return frozen?.BuildRecipe ?? current.BuildRecipe;
+    }
+
+    private string? Blocker(UatRun run)
+    {
+        if (run.QualificationKey is not null) return "Run the qualified workflow normally before preparing an implementation job.";
+        var manifest = run.Configuration?.Manifest ?? Manifests.Get(run.ApplicationId);
+        if (RecipeFor(run) is null || !manifest.Adapters.Any(a => a.Id == run.TestSnapshot.Adapter))
             return "This workflow does not have an implementation adapter.";
         if (run.Target is not { } target || !JobStates.Hash(target.SourceCommit) || target.SourceWasDirty)
             return "Run a clean committed application build and import its build receipt before implementing. This run has no reproducible clean source revision.";
@@ -82,7 +93,7 @@ public sealed partial class RunStore
             var feedback = FeedbackFor(runId).FirstOrDefault(f => f.Id == feedbackId) ?? throw new ArgumentException("Unknown feedback for this run.");
             var now = DateTimeOffset.UtcNow;
             var job = new ImprovementJob(Guid.NewGuid().ToString("N"), runId, feedbackId, run.ApplicationId,
-                feedback.Prompt.ReplaceLineEndings("\n"), 1, "draft", now, now, Blocker(run), run.Target?.SourceCommit);
+                feedback.Prompt.ReplaceLineEndings("\n"), 1, "draft", now, now, Blocker(run), run.Target?.SourceCommit, Recipe: RecipeFor(run));
             SaveJob(job); Event(job, "Task draft created from the original feedback and frozen run evidence."); return job;
         }
     }
@@ -104,7 +115,8 @@ public sealed partial class RunStore
             var job = Job(id);
             if (job.Status != "draft" || job.Revision != revision) throw new ArgumentException("The task changed or has already started. Reload before implementing.");
             if (job.StartBlocker is not null) throw new ArgumentException(job.StartBlocker);
-            job = job with { Status = "queued", UpdatedAt = DateTimeOffset.UtcNow, Revision = job.Revision + 1 };
+            var recipe = RecipeFor(Get(job.OriginalRunId)) ?? throw new ArgumentException("This application is configured for testing without implementation.");
+            job = job with { Status = "queued", UpdatedAt = DateTimeOffset.UtcNow, Revision = job.Revision + 1, Recipe = job.Recipe ?? recipe };
             SaveJob(job); Event(job, "Implementation explicitly requested. Waiting for the local worker."); return job;
         }
     }
@@ -122,11 +134,29 @@ public sealed partial class RunStore
             if (JobStates.Active(job.Status)) EndJob(job, "interrupted", "The worker lease expired. The worktree is retained; create a new job to retry.");
         }
     }
-    public JobClaim? ClaimJob()
+    public JobClaim? ClaimJob(WorkerClaimRequest? request)
     {
         lock (gate)
         {
-            ExpireJobs(); var job = ReadJobs("WHERE json_extract(payload,'$.status') = 'queued' ORDER BY rowid LIMIT 1").FirstOrDefault();
+            if (!ApplicationManifests.WorkerSupported(request?.Execution)) return null;
+            ExpireJobs();
+            using var db = Open(); using var cmd = db.CreateCommand();
+            cmd.CommandText = """
+                SELECT j.payload FROM improvement_jobs j JOIN runs r ON r.id=j.run_id
+                WHERE json_extract(j.payload,'$.status')='queued'
+                AND (json_extract(r.payload,'$.configuration.version') IS NULL OR json_extract(r.payload,'$.configuration.version')=$version)
+                AND (json_extract(r.payload,'$.configuration.manifest.runtime.version') IS NULL OR json_extract(r.payload,'$.configuration.manifest.runtime.version')=$runtime)
+                AND (json_extract(r.payload,'$.testSnapshot.adapter') IS NOT 'configured-v2' OR $workflow=1)
+                AND (json_extract(j.payload,'$.recipe') IS NULL OR $recipes=1)
+                AND (json_extract(r.payload,'$.testSnapshot.implementation.engineDigest') IS NULL OR json_extract(r.payload,'$.testSnapshot.implementation.engineDigest')=$engine)
+                ORDER BY j.rowid LIMIT 1
+                """;
+            cmd.Parameters.AddWithValue("$version", ApplicationManifests.SnapshotVersion);
+            cmd.Parameters.AddWithValue("$engine", request!.WorkflowEngineDigest);
+            cmd.Parameters.AddWithValue("$runtime", request.RuntimeContractVersion == RuntimeConfiguration.Version ? RuntimeConfiguration.Version : DBNull.Value);
+            cmd.Parameters.AddWithValue("$workflow", ApplicationManifests.ConfiguredWorkerSupported(request.Execution) ? 1 : 0);
+            cmd.Parameters.AddWithValue("$recipes", request.BuildRecipeVersion == 1 ? 1 : 0);
+            var job = cmd.ExecuteScalar() is string payload ? JsonSerializer.Deserialize<ImprovementJob>(payload, AppJson.Options) : null;
             if (job is null) return null;
             var lease = Guid.NewGuid().ToString("N");
             job = job with { Status = "preparing", UpdatedAt = DateTimeOffset.UtcNow };
@@ -169,10 +199,14 @@ public sealed partial class RunStore
             if (request.Stage is "building" or "launching" && (string.IsNullOrWhiteSpace(request.ThreadId ?? job.ThreadId) || string.IsNullOrWhiteSpace(request.WorktreePath ?? job.WorktreePath)))
                 throw new ArgumentException("Record the Codex thread and worktree before building.");
             if (request.Stage == "launching" && string.IsNullOrWhiteSpace(request.BuildVersion ?? job.BuildVersion)) throw new ArgumentException("Record the unique build version before launching.");
+            if (request.BuildReceipt is { } receipt && (request.Stage != "launching" || !receipt.ValidFor(job.Recipe) ||
+                (job.BuildReceipt is not null && job.BuildReceipt != receipt))) throw new ArgumentException("Invalid or changed build recipe receipt.");
+            if (request.Stage == "launching" && job.Recipe is not null && (request.BuildReceipt ?? job.BuildReceipt) is null)
+                throw new ArgumentException("Seal the selected recipe's compiled artifacts before launching.");
             job = job with { Status = request.Stage, UpdatedAt = DateTimeOffset.UtcNow,
                 WorktreePath = request.WorktreePath ?? job.WorktreePath, ThreadId = request.ThreadId ?? job.ThreadId,
                 ResultCommit = request.ResultCommit ?? job.ResultCommit, BuildVersion = request.BuildVersion ?? job.BuildVersion,
-                Summary = request.Summary ?? job.Summary };
+                Summary = request.Summary ?? job.Summary, BuildReceipt = request.BuildReceipt ?? job.BuildReceipt };
             SaveJob(job, request.Lease, DateTimeOffset.UtcNow.AddSeconds(45)); Event(job, request.Message); return job;
         }
     }
@@ -221,13 +255,18 @@ public sealed partial class RunStore
         {
             var job = RequireJobLease(id, request.Lease); var original = Get(job.OriginalRunId);
             if (job.Status != "launching" || job.CancelRequested || job.RerunId is not null) throw new ArgumentException("This job cannot start another regression run.");
-            ApplicationSetup.Validate(request.Target);
+            ApplicationSetup.Validate(request.Target, original.Configuration?.Manifest ?? Manifests.Get(job.ApplicationId));
             if (request.Target.ApplicationId != job.ApplicationId || request.Target.SourceCommit != job.ResultCommit || request.Target.SourceWasDirty ||
-                request.Target.ExpectedBuildVersion != job.BuildVersion || request.Target.BaseUrl == original.BaseUrl)
+                request.Target.ExpectedBuildVersion != job.BuildVersion || request.Target.BaseUrl == original.BaseUrl ||
+                request.Target.BuildReceipt != job.BuildReceipt)
                 throw new ArgumentException("The regression target must identify the clean resulting commit on its own local instance.");
             var now = DateTimeOffset.UtcNow; var runId = Guid.NewGuid().ToString("N"); var runLease = Guid.NewGuid().ToString("N");
             var run = new UatRun(runId, original.TestId, original.ApplicationId, "running", "pending", now, now, null,
-                $"uat-{runId}", null, null, [], null, null, original.TestSnapshot, request.Target, null, job.Id, original.Id);
+                $"uat-{runId}", null, null, [], null, null, original.TestSnapshot, request.Target, null, job.Id, original.Id, Worker: request.Worker,
+                DefinitionRevision: original.DefinitionRevision);
+            var snapshot = Manifests.Freeze(run, original.Configuration);
+            ApplicationManifests.RequireWorker(snapshot, request.Worker);
+            run = run with { Configuration = snapshot };
             job = job with { Status = "rerunning", RerunId = runId, UpdatedAt = now };
             using var db = Open(); using var transaction = db.BeginTransaction(); using var cmd = db.CreateCommand(); cmd.Transaction = transaction;
             cmd.CommandText = "INSERT INTO runs(id,payload,lease,lease_expires) VALUES($run,$runPayload,$runLease,$expires); UPDATE improvement_jobs SET payload=$jobPayload,lease_expires=$expires WHERE id=$job";
@@ -252,7 +291,7 @@ public sealed partial class RunStore
     public string? JobArtifactPath(string id, string file)
     {
         _ = Job(id);
-        return file is "codex.log" or "build.log" or "launch.log" or "diff.patch" or "summary.json"
+        return file is "codex.log" or "build.log" or "launch.log" or "diff.patch" or "summary.json" or "build-receipt.json"
             ? Path.Combine(DataPath, "jobs", id, file) : null;
     }
 }

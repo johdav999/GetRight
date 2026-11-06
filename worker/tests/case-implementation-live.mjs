@@ -10,8 +10,7 @@ import { chromium, expect } from '@playwright/test';
 import { api, repositoryRoot } from '../src/settings.mjs';
 import { dashboardHost } from './dashboard-host.mjs';
 import { executeCaseImplementation } from '../src/case-implementation.mjs';
-import { executeRun } from '../src/runner.mjs';
-import { workflowEngineDigest } from '../src/workflow-engine.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 
 const dataPath = path.join(repositoryRoot, '.local', `case-live-${Date.now()}`); await mkdir(dataPath, { recursive: true });
 const dashboard = await dashboardHost(dataPath), origin = dashboard.origin;
@@ -38,10 +37,10 @@ try {
     { id: 'step-2', title: 'Reload the note page', expected: 'The same unique title and body are retained after reload.' },
   ]);
   const approved = await approve(test); console.log(`Running real Codex implementation ${approved.id}.`);
-  const result = await executeCaseImplementation(await api(origin, '/api/worker/case-implementations/claim', {}), configuration);
+  const result = await executeCaseImplementation(await api(origin, '/api/worker/case-implementations/claim', workerClaim), configuration);
   assert.equal(result.status, 'verified', result.error); assert.equal(result.validationRunIds.length, 2);
   const next = await api(origin, '/api/runs', { testId: test.id });
-  const completed = await executeRun(await api(origin, '/api/worker/claim', { workflowEngineDigest }), configuration);
+  const completed = await executeRun(await api(origin, '/api/worker/claim', workerClaim), configuration);
   assert.equal(completed.id, next.id); assert.equal(completed.status, 'passed', completed.error); assert.equal(completed.acceptance, 'pending');
   report.flows.push({ application: 'getright', compiler: 'real Codex SDK', job: result, rerunId: completed.id, acceptance: completed.acceptance });
   if (process.argv.includes('--virtual-company')) {
@@ -62,7 +61,7 @@ try {
       { stepId: 'step-3', actions: [{ kind: 'click', selector: '.test-policy button[type=submit]' }, { kind: 'expect-visible', selector: '[role=status]:has-text("Permissions saved.")' }] },
       { stepId: 'step-4', actions: [{ kind: 'reload' }, { kind: 'expect-checked', selector: draft }, { kind: 'expect-unchecked', selector: send }, { kind: 'expect-checked', selector: sender }, { kind: 'expect-value', selector: '#test-recipients', value: '{{email}}' }] },
     ] };
-    const verified = await executeCaseImplementation(await api(origin, '/api/worker/case-implementations/claim', {}), configuration, { implement: async ({ worktree, report }) => {
+    const verified = await executeCaseImplementation(await api(origin, '/api/worker/case-implementations/claim', workerClaim), configuration, { implement: async ({ worktree, report }) => {
       await report('Explicit synthetic plan compiler; validation uses the real Virtual Company build.', { threadId: 'synthetic-compiler-real-vc' });
       const file = path.join(worktree, 'config/implemented-tests', `${company.id}.json`); await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, JSON.stringify(plan, null, 2)); return { threadId: 'synthetic-compiler-real-vc' };
     } });

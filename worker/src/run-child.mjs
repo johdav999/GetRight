@@ -1,4 +1,4 @@
-import { executeRun } from './runner.mjs';
+import { executeRun } from './run-execution.mjs';
 
 // A standalone run owns its browser in this process, including manual review.
 // Parent IPC loss ends ownership and closes the browser even after a crash.

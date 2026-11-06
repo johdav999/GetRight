@@ -10,7 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { chromium, expect } from '@playwright/test';
 import { repositoryRoot, api } from '../src/settings.mjs';
-import { executeRun } from '../src/runner.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 import { executeJob } from '../src/jobs.mjs';
 import { executeCleanup } from '../src/cleanup.mjs';
 import { runCommand } from '../src/processes.mjs';
@@ -34,7 +34,7 @@ const rejected = async (route, body) => {
   assert.equal(response.status, 400, `${route}: ${await response.text()}`);
 };
 const queue = () => api(origin, '/api/runs', { testId: 'getright-save-note' });
-const claim = () => api(origin, '/api/worker/claim', {});
+const claim = () => api(origin, '/api/worker/claim', workerClaim);
 const runDemo = async () => { await queue(); const result = await executeRun(await claim(), configuration); assert.equal(result.status, 'passed', result.error); return result; };
 const age = run => patch('runs', run.id, { completedAt: new Date(Date.now() - 2 * 86400000).toISOString() });
 const cleanup = async candidate => {
@@ -45,7 +45,7 @@ let browser, proxy, baseline, changedHost;
 const sockets = new Set();
 const report = { scope: 'Milestone 4 local operational acceptance', flows: [], issues: [{ id: 'OPS-UAT-001', severity: 'P2', flow: 'History pagination', observed: 'Prerendered pagination buttons accepted clicks before Blazor hydration, leaving the page unchanged.', expected: 'Controls wait for interactivity and Next page displays the next result page.', evidence: 'history-desktop.png', status: 'open' }] };
 try {
-  const db = database(); assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6); db.close();
+  const db = database(); assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8); db.close();
   assert.equal((await api(origin, `/api/runs/${legacy.id}`)).acceptance, 'accepted');
   assert.equal((await api(origin, `/api/runs/${legacy.id}/reviews`)).length, 0);
   const cancelled = await queue(); await api(origin, `/api/runs/${cancelled.id}/cancel`, {});
@@ -201,9 +201,13 @@ try {
   const draft = await api(origin, '/api/jobs', { runId: original.id, feedbackId: change.id });
   await api(origin, `/api/jobs/${draft.id}/start`, { revision: draft.revision });
   const jobConfiguration = { ...configuration, jobOptions: { repositoryPath: source, worktreeRoot: path.join(repositoryRoot, 'worktrees') } };
-  const job = await executeJob(await api(origin, '/api/worker/jobs/claim', {}), jobConfiguration, {
+  const job = await executeJob(await api(origin, '/api/worker/jobs/claim', workerClaim), jobConfiguration, {
     implement: async ({ worktree, report }) => { await writeFile(path.join(worktree, 'app.txt'), 'changed'); await report('Synthetic source change.', { threadId: 'operations-contract' }); return { summary: 'Synthetic operations change.' }; },
-    build: async input => input,
+    build: async input => {
+      const artifact = path.join(input.jobRoot, 'compiled.txt');
+      await writeFile(artifact, input.version);
+      return { ...input, artifactRoots: [artifact] };
+    },
     launch: async ({ build, resultCommit }) => { changedHost = await createWriterAppContractHost(); changedHost.state.version = build.version; changedHost.state.userId = profile.expectedUserId;
       return { target: { ...profile, baseUrl: changedHost.origin, expectedBuildVersion: build.version, sourceCommit: resultCommit }, stop: async () => { await changedHost.close(); changedHost = null; } }; },
   });

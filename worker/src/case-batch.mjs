@@ -67,7 +67,8 @@ export async function executeCaseImplementationBatch(batch, configuration, adapt
           if (current.buildKey !== inputs.buildKey) throw new Error('The shared build SDK or build recipe changed. Rebuild before validating another case.');
           await seal.verify(signal);
           const status = await runCommand('git', ['-c', 'core.longpaths=true', '-C', build.worktree, 'status', '--porcelain'], { env: cleanEnvironment(), signal });
-          if (status.output.trim()) throw new Error('The shared application source changed after its approved build.');
+          const head = await runCommand('git', ['-C', build.worktree, 'rev-parse', 'HEAD'], { env: cleanEnvironment(), signal });
+          if (status.output.trim() || head.output.trim() !== owner.job.approvedTarget.sourceCommit) throw new Error('The shared application source or Git identity changed after its approved build.');
         };
         shared = { build, attribution, verify }; await verify(buildStop.signal);
         await writeFile(path.join(owner.root, 'shared-build.json'), JSON.stringify({ batchId: batch.id, ...attribution,

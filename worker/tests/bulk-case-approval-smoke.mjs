@@ -35,7 +35,9 @@ try {
   const a = seed('Already approved note'), b = seed('Suite-scoped pending note'), c = seed('Other pending note');
   const blocked = seed('Wrong-build company draft', 'virtual-company');
   const suite = await api(origin, '/api/suites', { applicationId: 'getright', name: 'Only the selected note', description: 'Bulk scope fixture.', testIds: [b.id] });
+  const companySuite = await api(origin, '/api/suites', { applicationId: 'virtual-company', name: 'Only the selected company draft', description: 'Offline approval fixture.', testIds: [blocked.id] });
   const catalog = JSON.parse(await readFile(path.join(repositoryRoot, 'config/catalog.json'), 'utf8'));
+  const builtInDraftCount = catalog.tests.filter(test => test.readiness === 'draft').length;
   const runId = randomUUID().replaceAll('-', '');
   const legacy = { id: runId, testId: catalog.tests[0].id, applicationId: 'getright', status: 'passed', acceptance: 'pending', createdAt: new Date().toISOString(), completedAt: new Date().toISOString(), fixtureId: `uat-${runId}`, buildVersion: 'synthetic-history', steps: [], testSnapshot: catalog.tests[0] };
   const db = new DatabaseSync(path.join(dataPath, 'getright.db')); db.prepare('INSERT INTO runs(id,payload) VALUES(?,?)').run(runId, JSON.stringify(legacy)); db.close();
@@ -62,9 +64,9 @@ try {
   report.flows.push({ id: 'BULK-001', name: 'Application/suite scope, skip already active, disable empty batch and prevent duplicate approval', status: 'verified' });
 
   await page.getByRole('button', { name: 'All applications', exact: true }).click();
-  await expect(approve()).toHaveText('Approve all pending test cases (6)');
+  await expect(approve()).toHaveText(`Approve all pending test cases (${builtInDraftCount + 2})`);
   await approve().click();
-  await expect(bulk.getByRole('status')).toHaveText('1 queued for implementation; 5 could not be approved; 0 left unprocessed.');
+  await expect(bulk.getByRole('status')).toHaveText(`1 queued for implementation; ${builtInDraftCount + 1} could not be approved; 0 left unprocessed.`);
   const later = seed('Added after the bulk click');
   await page.getByRole('button', { name: 'Getright demo', exact: true }).click();
   await bulk.getByText('Last batch:', { exact: false }).click();
@@ -84,6 +86,7 @@ try {
   const profile = await api(origin, '/api/applications/virtual-company/profile');
   await api(origin, '/api/applications/virtual-company/profile', { ...profile, sourceCommit: 'a'.repeat(40) });
   await page.getByRole('button', { name: 'Virtual Company', exact: true }).click();
+  await page.getByLabel('Test suite', { exact: true }).selectOption(companySuite.id);
   await expect(approve()).toHaveText('Approve all pending test cases (1)'); await approve().click();
   await expect(bulk.getByRole('status')).toHaveText('1 queued for implementation; 0 could not be approved; 0 left unprocessed.');
   const companyJob = (await jobs()).find(j => j.testId === blocked.id); assert(companyJob); assert.equal((await jobs()).length, 4);

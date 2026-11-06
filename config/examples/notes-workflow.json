@@ -1,0 +1,41 @@
+{
+  "id": "sample-notes-save",
+  "applicationId": "sample-notes",
+  "title": "Save and reopen a note",
+  "purpose": "Verify that the dedicated account can save an isolated note and reopen its persisted contents.",
+  "reviewQuestion": "Can an author tell when the note was saved?",
+  "readiness": "setup-required",
+  "adapter": "configured-v2",
+  "steps": [
+    { "id": "open", "title": "Open an isolated note", "expected": "A new blank note appears." },
+    { "id": "save", "title": "Save unique note text", "expected": "The backend stores the text and the UI confirms the save." },
+    { "id": "reopen", "title": "Reopen the saved note", "expected": "Both the editor and the independent API read return the saved text." }
+  ],
+  "workflow": {
+    "version": 2,
+    "reviewPath": "/notes",
+    "steps": [
+      { "stepId": "open", "actions": [
+        { "kind": "goto", "path": "/notes?id={{fixture-note}}" },
+        { "kind": "expect-visible", "locator": { "role": "heading" } },
+        { "kind": "expect-value", "locator": { "label": "Note" }, "value": "" }
+      ] },
+      { "stepId": "save", "actions": [
+        { "kind": "fill", "locator": { "label": "Note" }, "value": "Note for {{fixtureId}}" },
+        { "kind": "click", "locator": { "role": "button", "name": "Save note" }, "http": {
+          "method": "PUT", "path": "/api/notes/{{fixture-note}}",
+          "assertions": [{ "field": "id", "equalsValue": "{{fixture-note}}" }, { "field": "text", "equalsValue": "Note for {{fixtureId}}" }],
+          "capture": { "name": "noteId", "field": "id", "type": "uuid", "resourceKind": "note" }
+        } },
+        { "kind": "expect-text", "locator": { "role": "status" }, "value": "Note saved." }
+      ] },
+      { "stepId": "reopen", "actions": [
+        { "kind": "reload" },
+        { "kind": "expect-value", "locator": { "label": "Note" }, "value": "Note for {{fixtureId}}" },
+        { "kind": "request", "http": { "path": "/api/notes/{{noteId}}", "session": "author",
+          "assertions": [{ "field": "fixtureId", "equalsValue": "{{fixtureId}}" }, { "field": "text", "equalsValue": "Note for {{fixtureId}}" }]
+        } }
+      ] }
+    ]
+  }
+}

@@ -15,6 +15,12 @@ Company test-company setup, and the feedback-to-fix and operational milestones.
 It includes:
 
 - A .NET 10 Blazor dashboard with application filters, readable test steps and run history.
+- An Applications page for editing manifests and importing version 2 workflows,
+  previewing a local binding, and qualifying a workflow before it can run from the
+  control room. See [dashboard configuration and qualification](docs/architecture.md#dashboard-configuration-and-qualification).
+- A configuration-only onboarding path for isolated local applications, with a
+  disposable Node.js sample and an opt-in real Codex cycle. See the
+  [application authoring guide](docs/application-authoring.md).
 - SQLite persistence for test snapshots, results, review decisions and feedback.
 - A local Node.js / Playwright worker with a live docked browser for control-room runs.
 - An isolated demo test that creates, saves and reopens a note, capturing step
@@ -37,11 +43,20 @@ enabled. See the [implementation roadmap](docs/roadmap.md).
 Draft tests stay disabled until their automation is implemented and verified.
 Codex starts only after an explicit implementation action.
 
-Milestones 5–10 plan configuration-driven application integrations: versioned
-manifests, declarative workflows, trusted build recipes and dashboard setup,
-followed by migration and a third-application proof. The draft implementation flow
-already supports bounded browser workflows for the three existing fixture adapters;
-general application manifests and configurable host recipes remain planned.
+Milestone 5 adds [versioned application manifests](config/application-manifests.json)
+and freezes the manifest, workflow and target binding on each new run. The demo,
+WriterApp, Virtual Company and verified case workflows still use their existing
+adapters. Upgrade the dashboard and restart the worker together; new runs require
+a configuration-aware worker. Milestone 6 adds configured runtime checks,
+dedicated test sessions and disposable fixture recipes. See the
+[runtime plan contract](docs/architecture.md#runtime-plans).
+
+Milestone 7 adds [authored browser and API workflows](docs/architecture.md#authored-browser-and-api-workflows)
+with frozen steps, bounded actions, and HTTP evidence in the standard run history.
+
+Milestone 8 adds [trusted build recipes](docs/architecture.md#trusted-build-recipes)
+for improvement jobs and generated case validation, with sealed artifacts and
+build receipts on linked runs.
 
 ## Requirements
 
@@ -305,6 +320,11 @@ npm test --prefix worker
 npm run smoke --prefix worker
 npm run smoke:jobs --prefix worker
 npm run smoke:virtual-company --prefix worker
+npm run smoke:runtime-configuration --prefix worker
+npm run smoke:configured-workflow --prefix worker
+npm run smoke:build-recipes --prefix worker
+npm run smoke:application-configuration --prefix worker
+npm run smoke:integration-migration --prefix worker
 npm run smoke:operations --prefix worker
 npm run smoke:review --prefix worker
 npm run smoke:suites --prefix worker

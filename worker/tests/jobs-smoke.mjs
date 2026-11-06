@@ -2,13 +2,13 @@
 // explicit synthetic application and implementation adapters, no Codex API calls.
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { cp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { chromium, expect } from '@playwright/test';
 import { repositoryRoot, api } from '../src/settings.mjs';
 import { runCommand } from '../src/processes.mjs';
-import { executeRun } from '../src/runner.mjs';
+import { executeRun, workerClaim, workerExecution } from '../src/run-execution.mjs';
 import { executeJob } from '../src/jobs.mjs';
 import { dashboardHost } from './dashboard-host.mjs';
 import { createWriterAppContractHost } from './writerapp-contract-host.mjs';
@@ -22,7 +22,12 @@ await git(['init', '--initial-branch=main']); await git(['config', 'user.name', 
 await writeFile(path.join(fixtureRepo, 'BlazorApp.csproj'), '<Project />\n'); await writeFile(path.join(fixtureRepo, 'app.txt'), 'baseline\n');
 await git(['add', '.']); await git(['commit', '-m', 'Synthetic baseline']);
 const baseCommit = (await git(['rev-parse', 'HEAD'])).output.trim();
-const dashboard = await dashboardHost(dataPath); const origin = dashboard.origin;
+const dashboardDll = process.env.GETRIGHT_DASHBOARD_DLL || path.join(repositoryRoot, 'src/Getright.Dashboard/bin/Release/net10.0/Getright.Dashboard.dll');
+const buildCopy = path.join(dataPath, 'dashboard-bin');
+await cp(path.dirname(dashboardDll), buildCopy, { recursive: true });
+const manifestFile = path.join(buildCopy, 'application-manifests.json');
+const manifestDefinitions = JSON.parse(await readFile(manifestFile, 'utf8'));
+const dashboard = await dashboardHost(dataPath, { dllPath: path.join(buildCopy, path.basename(dashboardDll)) }); const origin = dashboard.origin;
 const configuration = { dashboardUrl: origin, dataPath, headless: true, jobOptions: { repositoryPath: fixtureRepo, worktreeRoot: path.join(repositoryRoot, 'worktrees'), codexTimeoutMs: 10000, buildTimeoutMs: 10000 } };
 let baselineHost, browser;
 const createdHosts = [];
@@ -35,7 +40,17 @@ try {
   const profile = { applicationId: 'writerapp', baseUrl: baselineHost.origin, expectedBuildVersion: baselineHost.state.version, expectedUserId: baselineHost.state.userId, isolatedDataConfirmed: true, sourceCommit: baseCommit, sourceWasDirty: false };
   await api(origin, '/api/applications/writerapp/profile', profile);
   const original = await api(origin, '/api/runs', { testId: 'writerapp-create-save' });
-  const originalClaim = await api(origin, '/api/worker/claim', {});
+  assert.equal(original.configuration.manifest.schemaVersion, 1);
+  assert.equal(await api(origin, '/api/worker/claim', {}), null, 'Legacy workers cannot claim a manifest-backed run.');
+  assert.equal(await api(origin, '/api/worker/claim', { ...workerClaim, runConfigurationVersion: 999 }), null);
+  const writerManifest = manifestDefinitions.find(m => m.applicationId === 'writerapp');
+  writerManifest.revision += 1;
+  await dashboard.stop();
+  await writeFile(manifestFile, JSON.stringify(manifestDefinitions));
+  await dashboard.start();
+  const originalClaim = await api(origin, '/api/worker/claim', workerClaim);
+  assert.deepEqual(originalClaim.run.configuration, original.configuration, 'A manifest change and restart must not change a queued snapshot.');
+  assert.deepEqual(originalClaim.run.worker, workerExecution);
   assert.equal((await executeRun(originalClaim, configuration)).status, 'passed');
   const feedback = await api(origin, `/api/runs/${original.id}/feedback`, { stepId: 'library', comment: 'Synthetic contract feedback.', requestedOutcome: 'Record a reviewable change while preserving the workflow.' });
   const unicodeDraft = await api(origin, '/api/jobs', { runId: original.id, feedbackId: feedback.id });
@@ -44,7 +59,9 @@ try {
   await api(origin, `/api/jobs/${unicodeDraft.id}/cancel`, {});
   await api(origin, '/api/applications/writerapp/profile', { ...profile, sourceWasDirty: true });
   const dirtyRun = await api(origin, '/api/runs', { testId: 'writerapp-create-save' });
-  assert.equal((await executeRun(await api(origin, '/api/worker/claim', {}), configuration)).status, 'passed');
+  assert.equal(dirtyRun.configuration.manifest.revision, writerManifest.revision);
+  assert.notEqual(dirtyRun.configuration.manifestDigest, original.configuration.manifestDigest);
+  assert.equal((await executeRun(await api(origin, '/api/worker/claim', workerClaim), configuration)).status, 'passed');
   const dirtyFeedback = await api(origin, `/api/runs/${dirtyRun.id}/feedback`, { stepId: 'library', comment: 'Dirty-source contract.', requestedOutcome: 'A reproducible source base is required.' });
   const blocked = await api(origin, '/api/jobs', { runId: dirtyRun.id, feedbackId: dirtyFeedback.id });
   assert.match(blocked.startBlocker, /clean committed/);
@@ -70,7 +87,7 @@ try {
   await page.getByRole('button', { name: 'Implement improvement', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Implementation queued');
   await rejected(`/api/jobs/${id}/start`, { revision: draft.revision });
-  const claims = await Promise.all([api(origin, '/api/worker/jobs/claim', {}), api(origin, '/api/worker/jobs/claim', {})]);
+  const claims = await Promise.all([api(origin, '/api/worker/jobs/claim', workerClaim), api(origin, '/api/worker/jobs/claim', workerClaim)]);
   assert.equal(claims.filter(Boolean).length, 1); const claim = claims.find(Boolean);
   await rejected(`/api/jobs/${id}/report`, { lease: 'wrong', stage: 'implementing', message: 'invalid' });
   await rejected(`/api/jobs/${id}/report`, { lease: claim.lease, stage: 'launching', message: 'invalid jump' });
@@ -84,7 +101,12 @@ try {
       await report('Synthetic implementation completed for contract verification.', { threadId: 'contract-thread' });
       return { summary: 'Synthetic change for orchestration contract verification.' };
     },
-    build: async ({ worktree, jobRoot, version, log }) => { log('Synthetic build adapter.\n'); return { worktree, jobRoot, version }; },
+    build: async ({ worktree, jobRoot, version, log }) => {
+      log('Synthetic build adapter.\n');
+      const artifact = path.join(jobRoot, 'compiled.txt');
+      await writeFile(artifact, version);
+      return { worktree, jobRoot, version, artifact, artifactRoots: [artifact] };
+    },
     launch: async ({ build, resultCommit, log }) => {
       log('Synthetic runtime adapter.\n'); const host = await createWriterAppContractHost(); createdHosts.push(host);
       host.state.version = build.version; host.state.userId = profile.expectedUserId;
@@ -98,7 +120,14 @@ try {
   const rerun = await api(origin, `/api/runs/${completed.rerunId}`);
   assert.equal(rerun.parentRunId, original.id); assert.equal(rerun.improvementJobId, id);
   assert.equal(rerun.status, 'passed'); assert.equal(rerun.acceptance, 'pending');
+  assert.deepEqual(rerun.configuration.manifest, original.configuration.manifest);
+  assert.equal(rerun.configuration.manifestDigest, original.configuration.manifestDigest);
+  assert.equal(rerun.configuration.workflowDigest, original.configuration.workflowDigest);
+  assert.notEqual(rerun.configuration.bindingDigest, original.configuration.bindingDigest);
   assert.equal(rerun.target.sourceCommit, completed.resultCommit); assert.equal(rerun.buildVersion, completed.buildVersion);
+  assert.deepEqual(completed.recipe, { id: 'writerapp-dotnet', version: 1 });
+  assert.deepEqual(rerun.target.buildReceipt, completed.buildReceipt);
+  assert.match(completed.buildReceipt.artifactDigest, /^[a-f0-9]{64}$/);
   assert.equal((await api(origin, `/api/runs/${original.id}`)).acceptance, 'improvements-requested');
   assert.equal((await api(origin, '/api/applications/writerapp/profile')).baseUrl, profile.baseUrl);
   assert(!('lease' in completed));
@@ -118,7 +147,7 @@ try {
   async function nextClaim() {
     const job = await api(origin, '/api/jobs', { runId: original.id, feedbackId: feedback.id });
     await api(origin, `/api/jobs/${job.id}/start`, { revision: job.revision });
-    return api(origin, '/api/worker/jobs/claim', {});
+    return api(origin, '/api/worker/jobs/claim', workerClaim);
   }
   const failedClaim = await nextClaim();
   const failed = await executeJob(failedClaim, configuration, { ...adapters, build: async () => { throw new Error('Deliberate build failure.'); } });
@@ -145,13 +174,15 @@ try {
   const queued = await api(origin, '/api/jobs', { runId: original.id, feedbackId: feedback.id });
   await api(origin, `/api/jobs/${queued.id}/start`, { revision: queued.revision });
   assert.equal((await api(origin, `/api/jobs/${queued.id}/cancel`, {})).status, 'cancelled');
-  assert.equal(await api(origin, '/api/worker/jobs/claim', {}), null);
+  assert.equal(await api(origin, '/api/worker/jobs/claim', workerClaim), null);
 
   const expiredClaim = await nextClaim();
   await api(origin, `/api/jobs/${expiredClaim.job.id}/report`, { lease: expiredClaim.lease, stage: 'implementing', message: 'Recovery contract.', threadId: 'recovery-contract', worktreePath: path.join(repositoryRoot, 'worktrees/recovery-contract') });
   await api(origin, `/api/jobs/${expiredClaim.job.id}/report`, { lease: expiredClaim.lease, stage: 'building', message: 'Recovery contract.', resultCommit: 'b'.repeat(40), buildVersion: '0.2.1.99' });
-  await api(origin, `/api/jobs/${expiredClaim.job.id}/report`, { lease: expiredClaim.lease, stage: 'launching', message: 'Recovery contract.' });
-  const expiringRun = await api(origin, `/api/jobs/${expiredClaim.job.id}/rerun`, { lease: expiredClaim.lease, target: { ...profile, baseUrl: 'http://127.0.0.1:2', expectedBuildVersion: '0.2.1.99', sourceCommit: 'b'.repeat(40) } });
+  const buildReceipt = { recipe: expiredClaim.job.recipe, recipeDigest: 'a'.repeat(64), artifactDigest: 'b'.repeat(64) };
+  await rejected(`/api/jobs/${expiredClaim.job.id}/report`, { lease: expiredClaim.lease, stage: 'launching', message: 'Missing recipe receipt.' });
+  await api(origin, `/api/jobs/${expiredClaim.job.id}/report`, { lease: expiredClaim.lease, stage: 'launching', message: 'Recovery contract.', buildReceipt });
+  const expiringRun = await api(origin, `/api/jobs/${expiredClaim.job.id}/rerun`, { lease: expiredClaim.lease, worker: workerExecution, target: { ...profile, baseUrl: 'http://127.0.0.1:2', expectedBuildVersion: '0.2.1.99', sourceCommit: 'b'.repeat(40), buildReceipt } });
   const sqlite = new DatabaseSync(path.join(dataPath, 'getright.db')); sqlite.exec('PRAGMA busy_timeout=5000');
   sqlite.prepare('UPDATE improvement_jobs SET lease_expires=? WHERE id=?').run('2000-01-01T00:00:00.0000000+00:00', expiredClaim.job.id); sqlite.close();
   assert.equal((await api(origin, `/api/jobs/${expiredClaim.job.id}`)).status, 'interrupted');
@@ -164,5 +195,9 @@ try {
   assert.equal((await api(origin, `/api/jobs/${id}`)).status, 'awaiting-review');
   assert.equal((await api(origin, `/api/runs/${rerun.id}`)).acceptance, 'pending');
   await rejected(`/api/jobs/${restartClaim.job.id}/report`, { lease: restartClaim.lease, stage: 'implementing', message: 'stale' });
+  await dashboard.stop();
+  writerManifest.schemaVersion = 999;
+  await writeFile(manifestFile, JSON.stringify(manifestDefinitions));
+  await assert.rejects(dashboard.start(), /Invalid or unsupported application manifest/);
   console.log(`PASS: schema-2 upgrade, editable job UI, worktree/commit isolation, linked rerun, progress/artifacts, pending acceptance, build/regression failures, cancellation, lease expiry and restart recovery.\nSynthetic contract evidence: ${dataPath}`);
 } finally { await browser?.close(); for (const host of createdHosts) await host.close(); await baselineHost?.close(); await dashboard.stop(); }

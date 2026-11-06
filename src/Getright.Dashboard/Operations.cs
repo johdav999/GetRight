@@ -10,7 +10,7 @@ public record ReviewEvent(long Sequence, DateTimeOffset CreatedAt, string Action
 public record CleanupCandidate(string Kind, string ResourceId, string Description, string Token, long? Bytes = null);
 public record CleanupRequest(string Kind, string ResourceId, string Token, int RetentionDays = 30);
 public record CleanupTask(string Id, string Kind, string ResourceId, string Status, DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt, string ApplicationId, string? WorktreePath = null, string? Commit = null, string? Error = null);
+    DateTimeOffset UpdatedAt, string ApplicationId, string? WorktreePath = null, string? Commit = null, string? Error = null, BuildRecipeReference? Recipe = null);
 public record CleanupClaim(CleanupTask Task, string Lease);
 public record CleanupFinish(string Lease, string Status, string? Error = null);
 public record CleanupBatch(List<CleanupCandidate> Items, int Page, bool HasMore);
@@ -197,7 +197,7 @@ public sealed partial class RunStore
             var now = DateTimeOffset.UtcNow;
             var job = request.Kind == "worktree" ? Job(request.ResourceId) : null;
             var task = new CleanupTask(Guid.NewGuid().ToString("N"), request.Kind, request.ResourceId, "queued", now, now,
-                job?.ApplicationId ?? Get(request.ResourceId).ApplicationId, job?.WorktreePath, job?.ResultCommit ?? job?.BaseCommit);
+                job?.ApplicationId ?? Get(request.ResourceId).ApplicationId, job?.WorktreePath, job?.ResultCommit ?? job?.BaseCommit, Recipe: job?.Recipe);
             SaveCleanup(task); return task;
         }
     }

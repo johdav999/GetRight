@@ -1,0 +1,11 @@
+{
+  "applicationId": "sample-notes",
+  "version": 1,
+  "sourceMarker": "package.json",
+  "process": {
+    "build": { "executable": "node", "script": "build.mjs", "args": ["{{artifact}}", "{{version}}", "{{commit}}"] },
+    "launch": { "executable": "node", "args": ["{{origin}}", "{{data}}"] },
+    "artifact": "notes.mjs",
+    "readyPath": "/_getright/runtime"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "id": "sample-notes",
+  "name": "Sample Notes",
+  "description": "Disposable Node.js application with server-side note persistence.",
+  "repositoryHint": "Disposable sample checkout"
+}

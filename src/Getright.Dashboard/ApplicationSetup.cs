@@ -3,13 +3,21 @@ using System.Text.Json;
 
 namespace Getright.Dashboard;
 
+public record IdentityPreview(string Name, string Subject, string Mode);
+public record CapabilityPreview(string Name, string State, string Detail);
+public record ApplicationPreview(ApplicationReadiness Readiness, string? BaseUrl, string? ExpectedBuild,
+    IdentityPreview[] Identities, string FixtureAdapter, FixtureRecipe[] Fixtures, CapabilityPreview[] Capabilities,
+    string? Scope = null, string? Role = null);
+
 public sealed class ApplicationSetup(RunStore store, ILogger<ApplicationSetup> logger)
 {
-    public static void Validate(ApplicationProfile profile)
+    public static void Validate(ApplicationProfile profile, ApplicationManifest manifest)
     {
-        if (profile.ApplicationId is not ("writerapp" or "virtual-company")) throw new ArgumentException("Unknown application setup.");
-        if (profile.ApplicationId == "virtual-company" && (!Guid.TryParse(profile.ExpectedCompanyId, out _) || profile.ExpectedRole != "owner"))
+        if (profile.ApplicationId != manifest.ApplicationId || !ApplicationManifests.NeedsTarget(manifest)) throw new ArgumentException("Unknown application setup.");
+        if (ApplicationManifests.Scoped(manifest) && (!Guid.TryParse(profile.ExpectedCompanyId, out _) || profile.ExpectedRole != "owner"))
             throw new ArgumentException("Virtual Company requires the isolated reference company ID and owner role from its launch receipt.");
+        if (ApplicationManifests.IsConfiguredTarget(manifest) && (profile.ExpectedCompanyId is not null || profile.ExpectedRole is not null))
+            throw new ArgumentException("This configured target uses an unscoped test account.");
         if (!Uri.TryCreate(profile.BaseUrl, UriKind.Absolute, out var url) || url.Scheme != "http" ||
             !url.IsLoopback || url.UserInfo != "" || url.AbsolutePath != "/" || url.Query != "" || url.Fragment != "" ||
             !(url.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
@@ -19,6 +27,8 @@ public sealed class ApplicationSetup(RunStore store, ILogger<ApplicationSetup> l
             string.IsNullOrWhiteSpace(profile.ExpectedUserId) || profile.ExpectedUserId.Length > 150)
             throw new ArgumentException("Provide the expected running build version and dedicated UAT account ID (up to 150 characters each).");
         if (!profile.IsolatedDataConfirmed) throw new ArgumentException("Confirm that this instance uses isolated UAT data before enabling it.");
+        if (profile.BuildReceipt is { } receipt && (!receipt.ValidFor(null) || !JobStates.Hash(profile.SourceCommit) || profile.SourceWasDirty))
+            throw new ArgumentException("A build receipt needs a valid recipe, sealed artifact and clean source commit.");
         if (profile.SourceCommit is not null && !System.Text.RegularExpressions.Regex.IsMatch(profile.SourceCommit, "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$"))
             throw new ArgumentException("The source revision must be a Git commit hash when supplied.");
     }
@@ -27,16 +37,21 @@ public sealed class ApplicationSetup(RunStore store, ILogger<ApplicationSetup> l
     {
         var profile = store.Profile(applicationId);
         if (profile is null) return new(false, "Configure the local application instance first.");
-        return await Check(profile, cancellationToken);
+        return await Check(profile, store.Manifests.Get(applicationId), cancellationToken);
     }
-    private async Task<ApplicationReadiness> Check(ApplicationProfile profile, CancellationToken cancellationToken)
+    private async Task<ApplicationReadiness> Check(ApplicationProfile profile, ApplicationManifest manifest, CancellationToken cancellationToken)
     {
-        Validate(profile);
+        Validate(profile, manifest);
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false })
             { BaseAddress = new Uri(profile.BaseUrl), Timeout = TimeSpan.FromSeconds(5) };
         try
         {
-            if (profile.ApplicationId == "virtual-company")
+            if (manifest.Runtime is { } runtime)
+            {
+                await RuntimeConfiguration.Check(runtime, profile, cancellationToken);
+                return new(true, "Ready: configured runtime and dedicated test identities match.", profile.ExpectedBuildVersion);
+            }
+            if (ApplicationManifests.Scoped(manifest))
             {
                 using var response = await client.GetAsync("/_getright/runtime", cancellationToken);
                 if (!response.IsSuccessStatusCode) return new(false, "Virtual Company UAT runtime is unavailable.");
@@ -64,6 +79,10 @@ public sealed class ApplicationSetup(RunStore store, ILogger<ApplicationSetup> l
                 return new(false, "WriterApp is not signed in as the configured UAT account. No test data was created.", running);
             return new(true, "Ready: the local build and dedicated UAT account match.", running);
         }
+        catch (InvalidOperationException exception) when (manifest.Runtime is not null)
+        {
+            return new(false, exception.Message);
+        }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -71,22 +90,53 @@ public sealed class ApplicationSetup(RunStore store, ILogger<ApplicationSetup> l
             return new(false, "Cannot verify the local application instance. Check that it is running and returning the expected version and account.");
         }
     }
-    public async Task<UatRun> Queue(string testId, CancellationToken cancellationToken = default, bool docked = false, bool stepByStep = false)
+    public async Task<ApplicationPreview> Preview(ApplicationProfile profile, CancellationToken cancellationToken = default)
     {
-        var test = store.Test(testId);
-        if (test.ApplicationId == "getright") return store.Queue(testId, docked: docked, stepByStep: stepByStep);
-        if (!Supported(test.ApplicationId, test.Adapter)) throw new ArgumentException("This workflow's adapter is not implemented yet.");
-        var profile = store.Profile(test.ApplicationId) ?? throw new ArgumentException("Configure the local application instance first.");
-        ValidateWorkflowTarget(test, profile);
-        var readiness = await Check(profile, cancellationToken);
-        if (!readiness.Ready) throw new ArgumentException(readiness.Message);
-        return store.Queue(testId, profile, docked, stepByStep);
+        var manifest = store.Manifests.Get(profile.ApplicationId);
+        ApplicationReadiness readiness;
+        var valid = false;
+        try
+        {
+            Validate(profile, manifest);
+            valid = true;
+            readiness = await Check(profile, manifest, cancellationToken);
+        }
+        catch (ArgumentException error) { readiness = new(false, error.Message); }
+        var identities = manifest.Runtime?.Identities.Select(identity => new IdentityPreview(identity.Name,
+            identity.Subject ?? profile.ExpectedUserId, identity.Form is null ? "Development identity" : "Dedicated form session")).ToArray() ??
+            [new("primary", profile.ExpectedUserId, "Registered adapter")];
+        var fixtures = manifest.Runtime?.Fixtures ?? [];
+        var recipeOptions = store.RecipeOptions(profile.ApplicationId);
+        CapabilityPreview implementation;
+        if (manifest.BuildRecipe is not { } recipe) implementation = new("Codex fixes", "Unsupported", "This manifest enables testing only.");
+        else if (!recipeOptions.Recipes.Contains(recipe)) implementation = new("Codex fixes", "Blocked", recipeOptions.Error ?? "Authorize the selected recipe in the local worker configuration.");
+        else if (!readiness.Ready || profile.SourceWasDirty || !JobStates.Hash(profile.SourceCommit))
+            implementation = new("Codex fixes", "Blocked", "Verify the running target and bind a clean source commit from its launch receipt.");
+        else implementation = new("Codex fixes", "Configured", $"Uses {recipe.Id} v{recipe.Version}. Implementation requires explicit approval from a tested run.");
+        return new(readiness, valid ? profile.BaseUrl : null, valid ? profile.ExpectedBuildVersion : null, valid ? identities : [],
+            manifest.FixtureAdapter, fixtures,
+            [new("Testing", readiness.Ready ? "Ready" : "Blocked", readiness.Message),
+             new("Fixture provisioning", ApplicationManifests.IsConfiguredTarget(manifest) && fixtures.Length == 0 ? "Unsupported" : readiness.Ready ? "Ready" : "Blocked", fixtures.Length > 0 ?
+                "Uses the declared disposable fixture recipes." : ApplicationManifests.IsConfiguredTarget(manifest) ?
+                "This manifest has no provisioning recipes." : "Uses the registered adapter's isolated fixture."), implementation],
+            valid ? profile.ExpectedCompanyId : null, valid ? profile.ExpectedRole : null);
     }
-    public static bool Supported(string applicationId, string? adapter) =>
-        (applicationId == "writerapp" && adapter == "writerapp-create-save") ||
-        (applicationId == "virtual-company" && adapter == "virtual-company-test-setup") ||
-        (applicationId is "getright" or "writerapp" or "virtual-company" && adapter == WorkflowContract.Adapter);
 
+    public async Task<UatRun> Queue(string testId, CancellationToken cancellationToken = default, bool docked = false, bool stepByStep = false, bool qualification = false)
+    {
+        var definition = store.QueueDefinitionFor(testId, qualification);
+        var test = definition.Test;
+        if (test.Readiness == "draft" || !definition.Manifest.Adapters.Any(adapter => adapter.Id == test.Adapter))
+            throw new ArgumentException("This workflow's adapter is not implemented yet.");
+        if (ApplicationManifests.NeedsTarget(definition.Manifest))
+        {
+            var profile = definition.Target ?? throw new ArgumentException("Configure the local application instance first.");
+            ValidateWorkflowTarget(test, profile);
+            var readiness = await Check(profile, definition.Manifest, cancellationToken);
+            if (!readiness.Ready) throw new ArgumentException(readiness.Message);
+        }
+        return store.Queue(definition, qualification, docked, stepByStep);
+    }
     public static void ValidateWorkflowTarget(UatTest test, ApplicationProfile? profile)
     {
         if (test.Adapter != WorkflowContract.Adapter) return;
@@ -123,15 +173,18 @@ public sealed class ApplicationSetup(RunStore store, ILogger<ApplicationSetup> l
 
     public async Task<string> TestPage(string testId, CancellationToken cancellationToken = default)
     {
-        var test = store.Test(testId);
+        var definition = store.QueueDefinitionFor(testId, false);
+        var test = definition.Test;
         if (test.Readiness == "draft") throw new ArgumentException("This test case is a draft. Its entry page has not been verified yet.");
-        if (test.ApplicationId == "getright" && test.Adapter == "getright-save-note") return $"/uat-fixture.html?fixture=uat-{Guid.NewGuid():N}";
-        if (!Supported(test.ApplicationId, test.Adapter)) throw new ArgumentException("This test case does not have a verified entry page yet.");
-        var profile = store.Profile(test.ApplicationId) ?? throw new ArgumentException("Configure the local application instance first.");
+        var manifest = definition.Manifest;
+        if (!store.Manifests.Supports(test.ApplicationId, test.Adapter)) throw new ArgumentException("This test case does not have a verified entry page yet.");
+        if (!ApplicationManifests.NeedsTarget(manifest) && (test.Adapter == manifest.FixtureAdapter || test.Adapter == ConfiguredWorkflows.Adapter))
+            return $"{manifest.EntryPath}?fixture=uat-{Guid.NewGuid():N}";
+        var profile = definition.Target ?? throw new ArgumentException("Configure the local application instance first.");
         ValidateWorkflowTarget(test, profile);
-        var readiness = await Check(profile, cancellationToken);
+        var readiness = await Check(profile, manifest, cancellationToken);
         if (!readiness.Ready) throw new ArgumentException(readiness.Message);
-        var entry = test.Implementation is { } implementation ? WorkflowContract.Validate(test, implementation.PlanJson).ReviewPath : test.ApplicationId == "virtual-company" ? "/test-companies/new" : "/app/documents";
+        var entry = test.Workflow?.ReviewPath ?? (test.Implementation is { } implementation ? WorkflowContract.Validate(test, implementation.PlanJson).ReviewPath : manifest.EntryPath);
         return new Uri(new Uri(profile.BaseUrl), entry).AbsoluteUri;
     }
 }

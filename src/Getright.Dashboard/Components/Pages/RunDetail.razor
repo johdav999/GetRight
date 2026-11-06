@@ -20,12 +20,13 @@ else
     @if (run.Status is "queued" or "running")
     { <div class="notice">@(run.Status == "queued" ? "Waiting for the local worker. Start it from the repository with npm run start --prefix worker." : "The browser test is running. Results refresh automatically.")</div> }
     <div class="review-actions">
-    <TestPageButton TestId="@run.TestId" Title="@run.TestSnapshot.Title" />
+    @if (QualificationNeeded) { <a href="/applications">Qualify the current workflow</a> }
+    else { <TestPageButton TestId="@run.TestId" Title="@run.TestSnapshot.Title" /> }
     @if (run.Docked) { <a class="button-link secondary" href="/runs/@run.Id/watch" data-enhance-nav="false">Watch test / continue review</a> }
     @if (run.Status is "queued" or "running" && run.ImprovementJobId is null && run.CaseImplementationJobId is null) { <button class="secondary" disabled="@(!RendererInfo.IsInteractive || run.CancelRequested)" @onclick="Cancel">Cancel run</button> }
     @if (run.Status is not ("queued" or "running")) {
         <div class="run-mode-choice"><label for="rerun-execution-mode">Execution mode for next run</label><select id="rerun-execution-mode" @bind="executionMode" disabled="@(!RendererInfo.IsInteractive || queueing)"><option value="automatic">Run all steps automatically</option><option value="step">Step through one at a time</option></select></div>
-        <button class="secondary" disabled="@(!RendererInfo.IsInteractive || queueing)" @onclick="Again">Run again</button>
+        <button class="secondary" disabled="@(!RendererInfo.IsInteractive || queueing || QualificationNeeded)" @onclick="Again">Run again</button>
     }
     <a href="/history">Browse and compare runs</a>
     @if(run.ParentRunId is {} parent) { <a href="/compare?before=@parent&after=@run.Id">Compare with original</a> }
@@ -33,9 +34,53 @@ else
     @if(run.CancelRequested && run.Status == "running") { <p role="status">Cancellation requested. Waiting for the browser worker to stop.</p> }
     @if(run.EvidenceRetiredAt is not null) { <div class="notice">Evidence retired at @run.EvidenceRetiredAt.Value.ToLocalTime().ToString("g"). Results, feedback and review history are retained.</div> }
     <dl class="metadata"><div><dt>Tested build</dt><dd>@(run.BuildVersion ?? "Not recorded yet")</dd></div><div><dt>Fixture</dt><dd>@run.FixtureId</dd></div><div><dt>Environment</dt><dd>@(run.BaseUrl ?? "Not recorded yet")</dd></div><div><dt>Trace</dt><dd>@if (run.EvidenceRetiredAt is null && run.Trace is { } trace) { <a href="/api/evidence/@trace">Download Playwright trace</a> } else { <span>No trace available</span> }</dd></div></dl>
+    @if (run.Configuration is { } configuration)
+    {
+        var engine = run.TestSnapshot.Workflow is null ? run.Worker?.EngineDigest : run.Worker?.ConfiguredWorkflowDigest;
+        <details>
+            <summary>Run configuration</summary>
+            <dl class="metadata">
+                <div><dt>Manifest revision</dt><dd title="@configuration.ManifestDigest">@configuration.Manifest.Revision</dd></div>
+                @if (run.DefinitionRevision is { } definitionRevision)
+                { <div><dt>Imported workflow revision</dt><dd>@definitionRevision @(run.QualificationKey is null ? "" : "· Qualification run")</dd></div> }
+                <div><dt>Adapter</dt><dd>@configuration.Adapter.Id v@(configuration.Adapter.Version)</dd></div>
+                <div><dt>Workflow fingerprint</dt><dd title="@configuration.WorkflowDigest">@configuration.WorkflowDigest[..12]</dd></div>
+                <div><dt>Worker engine</dt><dd title="@engine">@(engine?[..12] ?? "Not recorded yet")</dd></div>
+                @if (run.Target?.BuildReceipt is { } receipt)
+                {
+                    <div><dt>Build recipe</dt><dd title="@receipt.RecipeDigest">@receipt.Recipe.Id v@(receipt.Recipe.Version)</dd></div>
+                    <div><dt>Artifact fingerprint</dt><dd title="@receipt.ArtifactDigest">@(receipt.ArtifactDigest[..12])</dd></div>
+                }
+                @if (run.Runtime is { } runtime)
+                {
+                    <div><dt>Runtime verified after execution</dt><dd>@(runtime.VerifiedAfter ? "Yes" : "No")</dd></div>
+                }
+            </dl>
+            @if (run.Runtime?.Fixtures is { Length: > 0 } fixtures)
+            {
+                <ul aria-label="Configured fixtures">
+                    @foreach (var fixture in fixtures)
+                    {
+                        <li>@fixture.Kind @(fixture.Id ?? "") (@fixture.Status.Replace('-', ' '))</li>
+                    }
+                </ul>
+            }
+        </details>
+    }
     @if (run.Error is not null) { <div class="notice error" role="alert">@run.Error</div> }
     @if (run.Target is { } target)
-    { <div class="run-summary"><span>Expected build: <strong>@target.ExpectedBuildVersion</strong></span><span>UAT account: <strong>@target.ExpectedUserId</strong></span><span>Evidence: <strong>@(run.Identity?.EvidenceKind ?? "Not verified yet")</strong></span><span>@(run.ApplicationId == "virtual-company" ? "Company" : "Document"): <strong>@(run.Identity?.CompanyId ?? run.Identity?.DocumentId ?? "Not created yet")</strong></span><span>Roles: <strong>@string.Join(", ", run.Identity?.Roles ?? [])</strong></span></div> }
+    {
+        <div class="run-summary">
+            <span>Expected build <strong>@target.ExpectedBuildVersion</strong></span>
+            <span>UAT account <strong>@target.ExpectedUserId</strong></span>
+            <span>Evidence <strong>@(run.Identity?.EvidenceKind ?? "Not verified yet")</strong></span>
+            @foreach (var resource in run.Identity?.Resources ?? [])
+            { <span>Resource <strong>@resource.Kind @resource.Id</strong></span> }
+            @if (run.Identity?.Resources is null && (run.Identity?.CompanyId ?? run.Identity?.DocumentId) is { } legacyResource)
+            { <span>Resource <strong>@legacyResource</strong></span> }
+            <span>Roles <strong>@string.Join(", ", run.Identity?.Roles ?? [])</strong></span>
+        </div>
+    }
     <div class="workspace-grid">
     <section class="panel"><div class="panel-heading"><h2>Step evidence</h2></div>
         @if (run.StepByStep && run.Status == "running") { <p class="detail-note">Live step progress. Final screenshots and trace become available when the run finishes.</p> }
@@ -45,6 +90,15 @@ else
             var status = result?.Status ?? StepStatus(step.Id);
             <article class="evidence-step"><div class="step-title"><h3>@step.Title</h3><span class="badge @status">@Home.Label(status)</span></div><p>@step.Expected</p>
                 @if (run.EvidenceRetiredAt is null && result?.Screenshot is { } shot) { <a href="/api/evidence/@shot" target="_blank"><img src="/api/evidence/@shot" alt="Screenshot for @step.Title" loading="lazy" /></a> }
+                @if (result?.ApiObservations is { Length: > 0 } observations)
+                {
+                    <ul aria-label="API observations">
+                        @foreach (var observation in observations)
+                        {
+                            <li>@observation.Method @observation.Path (HTTP @observation.Status) @observation.Session</li>
+                        }
+                    </ul>
+                }
                 @if (result?.Error is { } stepError) { <p class="error-text">@stepError</p> }
             </article>
         }
@@ -88,6 +142,7 @@ else
     private bool moreReviews, queueing;
     private string executionMode = "automatic";
     private bool stepByStep => executionMode == "step";
+    private bool QualificationNeeded => run?.DefinitionRevision is not null && !Store.Qualification(run.TestId).Qualified;
     private string? modeRunId;
     private readonly CancellationTokenSource stop = new();
     private Task? polling;

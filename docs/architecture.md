@@ -1,15 +1,193 @@
 # Architecture
 
-## Planned configuration-driven integrations
+## Application manifests and run configuration
 
-[Roadmap milestones 5–10](roadmap.md#configuration-driven-integration-plan) propose
-versioned JSON application manifests, declarative browser/API workflows and
-trusted local build/launch recipes around the shared run/job lifecycle. Registered,
-versioned extensions cover interactions and host infrastructure outside the shared
-action vocabulary. Resolved non-secret definitions and execution versions become
-part of immutable run attribution. General application manifests and configurable
-host recipes remain planned. The current implementation uses fixed application
-fixtures and host adapters, with a bounded browser vocabulary for approved cases.
+`config/application-manifests.json` is copied with the catalogue into the build.
+Each application has one schema-1 manifest with a revision, fixture adapter,
+supported adapter versions, manual review entry path and capabilities. Rebuild
+and restart to apply edits to future runs. The dashboard validates definitions
+at startup. A manifest can include a versioned runtime plan. The registered
+adapters still check their own target and run their existing browser workflows.
+Application manifests can select a versioned build recipe for implementation.
+
+Normal runs and case validation runs retain the resolved manifest, workflow and
+target binding. Fingerprints identify the manifest, full workflow snapshot and
+binding (including fixture and execution mode). Linked improvement reruns retain
+the original manifest and workflow; only their new isolated target, fresh fixture
+and automatic run mode are rebound. For a legacy parent without a manifest, the
+rerun uses the current compatible manifest and keeps the original workflow.
+
+The worker advertises the supported snapshot protocol and its engine fingerprint.
+Verified workflows additionally require their exact engine fingerprint at claim.
+The run process checks compatibility before starting the browser. Built-in
+adapter versions and the verified workflow engine files are unchanged. New runs
+record the worker identity at claim or direct start. Worker-local settings such
+as browser visibility and job build timeouts are operational settings, outside
+the application snapshot. Manifests and bindings have no credential fields and
+do not store browser state. Keep secret values out of workflow text.
+
+### Runtime plans
+
+WriterApp and Virtual Company declare their build and account checks in the
+manifest. A runtime plan starts with the development identity bound to the
+isolated launch receipt. Additional named identities use separate cookie jars.
+Each identity declares read-only `checks` with a local `path`, expected `status`
+(default 200), up to three `attempts`, and optional JSON `assertions`. A field
+can match a string, boolean or integer `equalsValue`, resolve a `binding` from
+`build`, `identity`, `scope` or `role`, or use `contains` to match one array
+element against several assertions. Dot-separated field names select nested
+objects. The first identity must check build and account against the receipt.
+Every other identity checks its account, using `subject` if it differs from
+the receipt account.
+
+A `form` on an additional identity submits URL-encoded credentials to its
+local `path`. Use `usernameRef` and `passwordRef` to name `GETRIGHT_UAT_*`
+environment variables in both the dashboard and worker processes. Form fields
+default to `username` and `password`. A form can specify its expected `status`
+when the host returns 302 or 303. Requests never follow redirects. These sessions
+belong to runtime checks and fixtures. The existing browser adapter keeps its own
+session. External identity providers are outside this runtime contract.
+
+An optional `fixtures` array names a `kind` and an `identity` for each disposable
+resource. The host must expose `GET /_getright/fixtures` and attest `isolated`,
+`version`, `userId`, and `companyId` when the target has a scope. Setup posts to
+`/_getright/fixtures/{kind}` and requires a 201 receipt with a UUID `id` and the
+exact `fixtureId`. The worker always sends the run's `fixtureId`. An optional
+`values` mapping fills named fields from `fixture-id`, `name` or `email`.
+
+At the end of execution, the worker rechecks the target and sessions. It reads
+each owned resource at `/_getright/fixtures/{kind}/{id}` before deleting in reverse
+creation order. Both calls include `X-Getright-Fixture`. The host must enforce
+ownership on DELETE. The default expected `deleteStatus` is 204. The worker never
+retries creation or deletes a resource whose ownership it cannot verify. A result
+records each cleanup outcome separately from the original workflow error. A
+hard process exit or lost ownership can leave a resource in the disposable host.
+The bundled adapters continue to use their existing application fixtures. Enable
+configured fixture recipes only for a host implementing this isolated contract.
+
+### Authored browser and API workflows
+
+Add an authored test to `config/catalog.json` with `adapter: "configured-v2"`,
+`readiness: "setup-required"` and a version 2 `workflow`. WriterApp and Virtual
+Company register this adapter. Copy the [WriterApp API example](../config/examples/writerapp-api-readiness.json)
+into the catalogue's `tests` array to try it. Rebuild the dashboard and restart
+it and the worker to load catalogue changes. The catalogue is trusted local
+configuration. Draft cases still use their existing approval and verification flow.
+
+The workflow has a literal local `reviewPath` and one `steps` entry for each
+catalogue step. Use the same `stepId` and order. Actions use a `kind` and an optional
+`timeoutMs` between 100 and 15,000. A step needs an assertion or an expected HTTP
+status. Each workflow supports up to 120 actions and 30 actions in a step.
+
+| Action | Fields and behavior |
+| --- | --- |
+| `goto`, `reload` | `goto` takes a local `path`. `reload` refreshes the active page. |
+| `click`, `fill`, `check`, `uncheck`, `select` | Provide a `locator` using exactly one of `css`, `role`, `label`, or `testId`. A role may include an exact `name`. `fill` and `select` take `value`. |
+| `expect-visible`, `expect-hidden`, `expect-text`, `expect-value`, `expect-checked`, `expect-enabled` | Wait within the action budget. `expect-text` checks contained text, and `expect-value` checks the exact value. |
+| `request` | Provide an `http` object with `path`, optional `method` (default `GET`), expected `status` (default 200), and optional named `session` from the runtime plan. `GET` supports up to three `attempts`. A `POST` needs a literal path listed in the manifest's `workflowPosts`, allows a scalar JSON `body`, and executes once. |
+| `click` with `http` | Begin waiting for the matching method and path before clicking. The observed response can supply assertions and a capture. |
+| `extension` | Provide the registered extension `id` and `version`. `writerapp-onboarding` version 1 prepares the isolated WriterApp test account. |
+
+HTTP `assertions` compare a JSON `field` to an `equalsValue` or a target `binding`
+of `build`, `identity`, `scope`, or `role`. Dot segments select nested fields or
+array indexes. An optional `capture` specifies `name`, `field` and `type` of
+`uuid`, `integer`, or `boolean`. A UUID capture can declare `resourceKind` for
+the run's typed resource evidence. Use `{{fixtureId}}`, `{{unique}}`, `{{email}}`,
+`{{fixture-kind}}` with the actual configured kind, or an earlier capture in action
+values. Paths accept only safe identifier substitutions. Named sessions are used
+by API actions. Browser actions use the isolated application browser session.
+
+Configured browsers and API calls stay on the verified local target. Redirects
+are blocked, so use the final local page path. Step evidence retains screenshots,
+the trace and observed HTTP statuses. Direct API response bodies and named-session
+credentials stay out of the recorded observations. The version 2 worker publishes
+its own engine fingerprint while verified version 1 cases keep their existing
+engine and validation history.
+
+### Trusted build recipes
+
+An application with the `implement` capability declares `buildRecipe` with an
+`id` and `version`. Applications with only `test` can run against their verified
+local instance. The dashboard freezes the recipe reference in new improvement
+and case implementation jobs. Recipe definitions and repository bindings are
+worker configuration. API requests and feedback provide no executable arguments.
+
+`config/build-recipes.json` supplies the WriterApp and Virtual Company host
+extensions. Virtual Company retains its sparse checkout and owned Web/API
+processes. Existing `writerapp.repositoryPath` and `virtual-company.repositoryPath`
+overrides in ignored `config/worker.local.json` still apply. Use the `recipes`
+object in that file to authorize a local process recipe. The key is its manifest
+ID. `applicationId`, `version`, and the source marker must match the job and Git
+checkout. Bump the recipe version when its definition changes.
+
+```json
+{
+  "recipes": {
+    "writerapp-local-node": {
+      "applicationId": "writerapp",
+      "version": 1,
+      "repositoryPath": "../isolated-node-uat",
+      "sourceMarker": "package.json",
+      "buildTimeoutMs": 120000,
+      "process": {
+        "build": { "executable": "node", "script": "tools/build.mjs", "args": ["{{artifact}}", "{{version}}", "{{commit}}"] },
+        "launch": { "executable": "node", "args": ["{{origin}}", "{{data}}"] },
+        "artifact": "server.mjs",
+        "readyPath": "/uat/ready",
+        "readyTimeoutMs": 10000
+      }
+    }
+  }
+}
+```
+
+This recipe expects the named build script and an isolated host that implements
+the selected application's adapter and runtime contracts. The process runner
+executes Node with argument arrays. The build runs in the dedicated worktree
+and writes its entry artifact to the job's `compiled` directory. The host runs
+from that sealed output with a fresh `host` data directory and loopback origin.
+The fixed placeholders are `worktree`, `output`, `artifact`, `version`, and
+`commit`, plus `origin`, `port`, and `data` during launch. The environment includes
+fixed build and host bindings alongside the worker's restricted base environment.
+
+The readiness endpoint returns `version`, `sourceCommit`, `userId`, and
+`isolated: true`. For a scoped app it also returns `companyId` and `role`, with a
+fresh isolated scope. The version and commit must match the compiled job. The
+worker records the recipe and artifact fingerprints in the build receipt, then
+checks that source and artifacts stay unchanged through validation. A linked
+rerun uses the original frozen workflow and the new target receipt. Human
+acceptance starts pending.
+
+### Dashboard configuration and qualification
+
+The Applications page reads the installed manifest and capability schema for
+each registered target. It can save local bindings, import a non-secret manifest
+revision, and import or revise a version 2 workflow. Local revisions are stored
+in SQLite. The manifest editor validates changes against installed adapter and
+authorization policy. Recipe selection exposes IDs and versions from the trusted
+registry and worker-local configuration. Command and path authorization remains
+with the worker.
+
+Check connection previews the entered binding before it is saved. It probes the
+running build and test identity and shows the fixture plan and capability
+blockers. It does not provision fixtures, enqueue a run, or save the binding.
+Queueing always checks the saved binding. The store checks for edits between
+preflight and insertion and rejects a request if its configuration changed.
+
+An imported workflow appears in the default application suite with execution
+disabled until the two most recent qualification runs pass for the exact
+workflow revision, manifest revision and saved binding. These runs record
+ordinary evidence and start with human acceptance pending. An edited definition
+or a different binding requires its own proof. Restoring the exact saved
+binding can reuse proof for the same definition revisions. Historical run
+snapshots, evidence and decisions retain the configuration they were recorded
+against.
+
+The version 2 engine also accepts new unscoped local targets declared with the
+generic configured adapter. It requires a build, identity and isolation receipt
+before provisioning or running a workflow. Built-in catalogue migrations keep
+the existing test and step IDs and route legacy snapshots to their original
+engine. See the [application authoring guide](application-authoring.md).
 
 ## Current implementation
 
@@ -37,7 +215,9 @@ Before constructing RunStore, the process holds an exclusive-writer file handle
 in its data directory. A second dashboard cannot perform restart recovery on a live
 instance's leases, including when it attempts to bind a different port. The OS
 releases ownership on process exit; retained metadata needs no manual deletion.
-Schema version 6 retains runs, feedback, application profiles, improvement jobs,
+Schema version 7 adds configuration and worker attribution to new run payloads.
+Existing rows are preserved without backfilling an unknown configuration or
+worker identity. The store retains runs, feedback, application profiles, improvement jobs,
 events, heartbeat expiry, review audit and cleanup journals. Startup
 migrates schemas 1–5 transactionally, preserving legacy payloads. Newer
 schemas are rejected instead of being downgraded. Future changes require migrations.
@@ -184,7 +364,7 @@ tracked source fail attribution checks.
 
 ```text
 data/
-  getright.db             # runs, feedback, profiles, jobs, suites, proposals and bindings, schema version 6
+  getright.db             # runs, feedback, profiles, jobs, suites, bindings and local definitions, schema version 8
   keys/                   # local ASP.NET keys, protected with DPAPI on Windows
   evidence/<run-id>/
     open.png

@@ -78,6 +78,31 @@ screenshots, traces, receipts, logs, worktrees and local commits remain for revi
 Reviewed improvement-job worktrees and evidence can be explicitly cleaned through
 [Local storage](operations.md). Detached launcher baselines remain for manual Git review.
 
+## Finance Agent verification
+
+Build Getright in Release and run the Finance pack from the Getright repository:
+
+```powershell
+npm run smoke:finance-agent:live --prefix worker -- <dedicated-virtual-company-worktree>
+```
+
+Use a clean, detached linked Virtual Company worktree. On Windows, use
+`-c core.autocrlf=false` during checkout so Virtual Company's embedded BAS
+catalogue retains its committed bytes. The app checks this catalogue's SHA-256.
+
+The command creates a disposable dashboard database, builds and starts the
+Virtual Company worktree, and queues the six authored workflows through
+Getright. Each run seeds its own companies, requester and approver identities,
+and accounting records. The harness scripts model responses. The application
+handles Finance planning, authorization, tool execution, and approvals.
+The workflow checks the Finance API and records screenshots and a trace.
+
+The report in `.local/finance-agent-live-*/finance-report.json` records the source
+commit, running build, run IDs, fixture IDs and observed results. Passing cases
+run a second time with a new fixture. A failed case is recorded and verification
+continues with the next case. All runs retain pending human acceptance. The
+regular catalogue leaves these cases disabled while qualification is incomplete.
+
 ## Product profile and fixture boundary
 
 | Item | Contract |

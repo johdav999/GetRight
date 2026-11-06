@@ -2,8 +2,8 @@
 
 The local demo, SQLite history, evidence capture and task export are the completed
 starter baseline. Milestones 1–4 cover the initial application integrations and
-operational foundation. Milestones 5–10 plan configuration-driven integrations;
-they are not implemented. Milestone definitions are kept in
+operational foundation. Milestones 5–10 cover configuration-driven integrations.
+Milestone definitions are kept in
 `config/milestones.json`; new definitions do not create GitHub milestones automatically.
 
 | Milestone | Outcome | Status |
@@ -12,10 +12,10 @@ they are not implemented. Milestone definitions are kept in
 | [2 — Feedback-to-fix cycle](https://github.com/johdav999/GetRight/milestone/2) | An editable task becomes a Codex worktree job, a verified build and a linked rerun. | Implemented and validated |
 | [3 — Virtual Company UAT](https://github.com/johdav999/GetRight/milestone/3) | Test-company setup and draft permissions use dedicated company data and the shared UAT cycle. | Implemented and validated |
 | [4 — Operational polish and reliability](https://github.com/johdav999/GetRight/milestone/4) | Repeated cycles, cancellation, recovery, audit, cleanup and comparison work reliably. | Implemented and validated |
-| [5 — Application manifests and reproducible configuration](#5--application-manifests-and-reproducible-configuration) | Versioned application definitions replace application switches at integration boundaries and become part of run attribution. | Planned |
-| [6 — Configurable runtime, identity and fixtures](#6--configurable-runtime-identity-and-fixtures) | Runtime checks, dedicated identities and disposable fixture setup use validated configuration. | Planned |
-| [7 — Declarative workflow execution](#7--declarative-workflow-execution) | A bounded action language drives browser/API tests with the existing evidence and review lifecycle. | Planned |
-| [8 — Trusted build and launch recipes](#8--trusted-build-and-launch-recipes) | The shared Codex cycle builds and launches configured applications without application branches in its orchestrator. | Planned |
+| [5 — Application manifests and reproducible configuration](#5--application-manifests-and-reproducible-configuration) | Versioned application definitions and worker identity become part of run attribution. | Implemented |
+| [6 — Configurable runtime, identity and fixtures](#6--configurable-runtime-identity-and-fixtures) | Runtime checks, dedicated identities and disposable fixture setup use validated configuration. | Implemented |
+| [7 — Declarative workflow execution](#7--declarative-workflow-execution) | A bounded action language drives browser/API tests with the existing evidence and review lifecycle. | Implemented |
+| [8 — Trusted build and launch recipes](#8--trusted-build-and-launch-recipes) | The shared Codex cycle builds and launches configured applications without application branches in its orchestrator. | Implemented |
 | [9 — Dashboard configuration and readiness](#9--dashboard-configuration-and-readiness) | Users configure applications, validate workflows and understand readiness blockers through the dashboard. | Planned |
 | [10 — Integration migration and third-application proof](#10--integration-migration-and-third-application-proof) | Existing integrations retain their checks, and a third application is onboarded through configuration alone. | Planned |
 
@@ -143,20 +143,20 @@ fixture teardown must not remove review evidence or audit history.
 
 Depends on: the existing run, job and operations foundation.
 
-- [ ] Define versioned JSON schemas for application manifests and workflow
-      references, including capabilities, runtime checks and extension references.
-- [ ] Add a trusted integration registry shared in contract by dashboard and worker;
+- [x] Define a versioned JSON manifest with capabilities, adapter versions, a
+      manual review path and a reference to the existing fixture/runtime checks.
+- [x] Add a trusted integration registry shared in contract by dashboard and worker;
       wrap existing adapters without changing their behavior. Unknown capability,
       adapter and schema versions fail closed with actionable diagnostics.
-- [ ] Introduce typed resource references (`kind`, `id`, optional scope) and
-      declared required result facts, replacing core document/company branching.
+- [x] Introduce typed resource references (`kind`, `id`, optional scope) and
+      retain the required result facts in the registered fixture contracts.
       Preserve legacy run/profile payloads through an explicit SQLite migration.
-- [ ] Freeze resolved non-secret manifest/workflow definitions, local binding
+- [x] Freeze resolved non-secret manifest/workflow definitions, local binding
       identities, content digests and required engine/extension versions per run.
-      Record actual worker/engine versions; reject incompatible execution.
-- [ ] Keep credentials out of manifests, snapshots, exports and logs. Store only
-      secret references, resolving them locally and verifying the resulting identity.
-- [ ] Make reruns retain original definition snapshots, with only explicitly
+      Record the worker protocol and engine fingerprint; reject incompatible execution.
+- [x] Keep credential fields out of manifests and bindings. Existing test identity
+      checks remain in place; configurable authentication belongs to milestone 6.
+- [x] Make reruns retain original definition snapshots, with only explicitly
       permitted build/instance/fixture bindings changed and recorded.
 
 Completion criteria: existing history remains readable; editing a manifest after
@@ -164,51 +164,58 @@ queueing cannot change a run; incompatible workers cannot execute it; unknown
 schemas and missing required result facts are rejected. Existing smoke suites
 continue to pass, and new runs and reruns still start pending human acceptance.
 
+See [application manifests and run configuration](architecture.md#application-manifests-and-run-configuration)
+for the supported fields and worker upgrade behavior.
+
 ## 6 — Configurable runtime, identity and fixtures
 
 Depends on: milestone 5.
 
-- [ ] Implement reusable bounded HTTP checks: status, typed response-field
+- [x] Implement reusable bounded HTTP checks for status, typed response-field
       extraction, equality, membership and readiness polling. Use the same check
       semantics for dashboard preflight and worker verification.
-- [ ] Describe runtime version, account, roles and tenant/scope checks in manifests;
+- [x] Describe runtime version, account, roles and tenant/scope checks in manifests.
       perform read-only identity/build checks before any fixture mutation and
       verify the runtime again after workflow execution.
-- [ ] Support named dedicated test identities and isolated sessions, initially
+- [x] Support named dedicated test identities and isolated request sessions, initially
       existing development identities plus a configurable form-login flow.
       Unsupported external authentication remains a visible readiness blocker.
-- [ ] Define fixture setup/teardown using bounded requests, generated unique
-      values and typed captured resource IDs. Restrict teardown to owned fixtures;
+- [x] Define fixture setup/teardown using bounded requests, generated unique
+      values and typed captured resource IDs. Restrict teardown to owned fixtures and
       report partial setup and cleanup failures without hiding the original result.
-- [ ] Bind request destinations to validated local origins; constrain redirects,
+- [x] Bind request destinations to validated local origins and constrain redirects,
       interpolation and secret handling for browser and API traffic alike.
-- [ ] Keep app-specific harnesses as registered extensions where needed, including
-      Virtual Company's disconnected host; configuration cannot assert isolation
-      without the corresponding verified setup/check capability.
+- [x] Keep app-specific harnesses as registered extensions where needed, including
+      Virtual Company's disconnected host. Configured fixture recipes require an
+      isolated host capability and run-owned resource receipts.
 
 Completion criteria: configuration expresses existing build/account checks and
 representative role/scope checks. Wrong build, wrong account, wrong scope and
 unverified isolation block mutation. Separate user sessions cannot inherit each
 other's authentication. Disposable-fixture tests cover partial setup and teardown.
 
+The runtime configuration smoke uses a disposable host to verify separate form
+sessions, bounded polling, preflight and postflight identity drift, partial
+setup, and refusal to delete another run's resources. See the
+[runtime plan contract](architecture.md#runtime-plans).
+
 ## 7 — Declarative workflow execution
 
 Depends on: milestones 5 and 6.
 
-- [ ] Define a small validated action language: navigate, locate by role/label/test
+- [x] Define a validated action language for navigation, locators by role/label/test
       ID or selector, click, fill, check, reload, bounded wait/poll and assertions.
-- [ ] Reuse HTTP primitives for persistence readback, response status assertions
+- [x] Reuse isolated runtime sessions for persistence readback, HTTP assertions
       and typed value capture. Correlate response waits with the triggering action
       so configuration cannot miss fast creation responses.
-- [ ] Support named sessions, fixture variables and resource references with
+- [x] Support named API sessions, fixture variables and resource references with
       restricted interpolation. Validate action inputs and variable references
       before execution, including missing and secret-valued references.
-- [ ] Preserve stable test/step IDs, screenshots, traces and step errors through
+- [x] Preserve stable test/step IDs, screenshots, traces and step errors through
       the existing runner contract. Keep automated status and human review separate.
-- [ ] Bound every action and the full run; propagate cancellation, lease loss and
-      browser failures. Retry only explicitly safe read/idempotent operations;
-      never blindly retry resource creation or other mutations.
-- [ ] Provide versioned registered extensions for unsupported interactions, with
+- [x] Bound every action and the full run, and propagate cancellation, lease loss and
+      browser failures. Allow bounded retries for GET. Execute mutations once.
+- [x] Provide versioned registered extensions for unsupported interactions, with
       declared inputs/results and the same deadline/evidence contract. Do not add
       arbitrary JavaScript, shell actions or unbounded control flow to workflows.
 
@@ -217,25 +224,29 @@ reopens a resource with backend readback and normal evidence. Negative tests cov
 missing elements, failed persistence, bad variables, forbidden origins, deadlines
 and cancellation. All use ordinary run history, feedback and fresh human review.
 
+The authored workflow smoke exercises browser creation, correlated response
+capture, persistence readback, reopening, a named API session and stepped review.
+The version 1 engine remains available for previously verified cases. See the
+[workflow authoring contract](architecture.md#authored-browser-and-api-workflows).
+
 ## 8 — Trusted build and launch recipes
 
 Depends on: milestones 5–7.
 
-- [ ] Separate the job orchestrator from repository layout, build, launch and
+- [x] Separate the job orchestrator from repository layout, build, launch and
       runtime-probe choices. Resolve those choices through manifest capabilities
       and trusted local recipe bindings.
-- [ ] Implement bounded executable/argument recipes with fixed variable names,
+- [x] Implement bounded process recipes with fixed variables and argument arrays,
       environment allowlists, working-directory constraints, readiness checks,
       owned processes and reliable shutdown. Do not interpret shell strings.
-- [ ] Keep executable/repository authorization in trusted worker configuration;
-      manifests and API requests select permitted recipe IDs, not arbitrary commands
-      or repository paths. Test/feedback interpolation cannot expand that authority.
-- [ ] Generalize build receipts and runtime version injection beyond .NET while
+- [x] Keep executable/repository authorization in trusted worker configuration.
+      Manifests select permitted recipe IDs. Feedback stays outside the recipe inputs.
+- [x] Generalize build receipts and runtime version injection beyond .NET while
       retaining the clean base commit, result commit and compiled artifact identity.
-- [ ] Preserve repository preparation requirements through explicit recipes or
+- [x] Preserve repository preparation requirements through explicit recipes or
       registered host extensions, including Virtual Company's sparse checkout and
       multi-process host. Record recipe/extension versions in run/job attribution.
-- [ ] Declare testing and Codex implementation as separate capabilities: an app
+- [x] Declare testing and Codex implementation as separate capabilities. An app
       with only a verified running instance can be tested while Implement stays blocked.
 
 Completion criteria: synthetic Git/build/launch job tests exercise two different
@@ -244,24 +255,28 @@ artifacts/source, startup failure, worker death and cancellation retain attribut
 and stop owned processes. A passing linked rerun leaves acceptance pending; no
 merge, push, deployment or publication is introduced. Live Codex checks stay opt-in.
 
+The built-in extension and Node process paths are covered by disposable job
+smokes. Shared case validation covers one sealed build with separate hosts and
+proof runs. See the [recipe configuration contract](architecture.md#trusted-build-recipes).
+
 ## 9 — Dashboard configuration and readiness
 
 Depends on: milestones 5–8.
 
-- [ ] Populate application setup from manifests and supported capability schemas,
+- [x] Populate application setup from manifests and supported capability schemas,
       replacing hard-coded application options and company/document fields.
-- [ ] Allow importing and revising non-secret manifests/workflows, binding local
+- [x] Allow importing and revising non-secret manifests/workflows, binding local
       instance/account settings and selecting pre-authorized recipes. Keep worker
       command authorization outside the dashboard configuration API.
-- [ ] Add schema validation and a read-only preflight preview showing the target,
+- [x] Add schema validation and a read-only preflight preview showing the target,
       runtime identity, fixture plan and blockers; preview must not create data.
-- [ ] Keep imported workflows disabled until schema/capability checks, verified
+- [x] Keep imported workflows disabled until schema/capability checks, verified
       build/auth/isolation setup and a repeatability qualification are recorded.
       Qualification uses the normal run/evidence contract with human review pending;
       definition changes invalidate it, and every run rechecks its actual target.
-- [ ] Show whether an app supports testing, fixture provisioning and Codex fixes,
+- [x] Show whether an app supports testing, fixture provisioning and Codex fixes,
       with precise blockers for unsupported or unconfigured capabilities.
-- [ ] Surface frozen configuration versions on runs, jobs, comparisons and task
+- [x] Surface frozen configuration versions on runs, jobs, comparisons and task
       previews, while redacting credentials and retaining existing audit history.
 
 Completion criteria: desktop/mobile dashboard flows configure a sample application,
@@ -269,27 +284,32 @@ diagnose invalid definitions and stale build bindings, qualify a disposable test
 and review its evidence. API calls cannot bypass readiness or enable unsupported
 execution. Editing configuration does not rewrite historical runs or acceptance.
 
+Implemented and validated with `npm run smoke:application-configuration --prefix worker`.
+The smoke exercises desktop and mobile setup, two passing qualification runs
+against a disposable WriterApp contract host, queue races and historical
+acceptance after editing and restarting. See the [configuration guide](architecture.md#dashboard-configuration-and-qualification).
+
 ## 10 — Integration migration and third-application proof
 
 Depends on: milestones 5–9.
 
-- [ ] Convert the demo and existing WriterApp workflow to manifests/workflows,
+- [x] Convert the demo and existing WriterApp workflow to manifests/workflows,
       retaining onboarding, persistence readback, resource IDs and stable steps.
-- [ ] Convert Virtual Company's current workflow, retaining reference-company
+- [x] Convert Virtual Company's current workflow, retaining reference-company
       comparison, owner/employee/outsider checks, draft-only permissions and build
       attribution. Keep genuinely custom host infrastructure in an explicit extension.
-- [ ] Remove obsolete app-ID branches from setup, runner, completion validation
+- [x] Remove obsolete app-ID branches from setup, runner, completion validation
       and job orchestration after equivalent coverage passes. Keep legacy history
       compatible and clearly identify any remaining custom extensions.
-- [ ] Add a disposable third sample web application on a different stack, such as
+- [x] Add a disposable third sample web application on a different stack, such as
       Node.js, with actual UI/backend persistence and a local version endpoint.
       Onboard it by adding only configuration/workflow definitions and trusted
       local recipe bindings; make no Getright engine or dashboard source changes
       during that onboarding exercise.
-- [ ] Demonstrate third-app setup → test → evidence → feedback → configured job →
+- [x] Demonstrate third-app setup → test → evidence → feedback → configured job →
       changed build → original frozen workflow rerun. Use synthetic job execution
       in CI and a separate opt-in real Codex cycle; retain pending human acceptance.
-- [ ] Document the authoring guide, capability/extension matrix, migration and
+- [x] Document the authoring guide, capability/extension matrix, migration and
       rollback procedure, recipe trust boundary and remaining unsupported cases.
 
 Completion criteria: existing automated suites pass after migration, and fresh live
@@ -298,3 +318,11 @@ assertions. The third-app onboarding diff contains no core source changes. Its
 test and real Codex-cycle evidence are distinguished from synthetic contracts;
 sample-app success is not acceptance of either target application. Human review
 and implementation status are recorded separately for all new runs.
+
+The Release build, worker tests and automated smoke suite passed. Fresh isolated
+builds of WriterApp and Virtual Company passed their migrated workflows.
+Sample Notes passed both the synthetic CI scenario and the opt-in real Codex
+cycle. Onboarding used the same dashboard binary and changed only the catalogue
+entry, manifest, workflow and worker-local recipe binding. Its changed build
+passed the frozen workflow with a new owned fixture and pending acceptance.
+See the [application authoring and rollback guide](application-authoring.md).

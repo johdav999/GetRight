@@ -76,7 +76,7 @@ try {
   const restored = await api(origin, `/api/runs/${legacyId}`);
   assert.equal(restored.acceptance, legacy.acceptance); assert.equal(restored.buildVersion, legacy.buildVersion);
   assert.equal(Date.parse(restored.createdAt), Date.parse(legacy.createdAt));
-  const migrated = new DatabaseSync(path.join(data, 'getright.db')); assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 6);
+  const migrated = new DatabaseSync(path.join(data, 'getright.db')); assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 8);
   assert.deepEqual(JSON.parse(migrated.prepare('SELECT payload FROM runs WHERE id=?').get(legacyId).payload), legacy); migrated.close();
   const seeded = await api(origin, '/api/suites'); assert.equal(seeded.length, 3);
   assert.equal(seeded.find(s => s.applicationId === 'writerapp').testIds.length, 5);
@@ -98,7 +98,10 @@ try {
   assert.equal((await api(origin, '/api/runs')).length, 1);
   await page.goto(origin); await page.getByRole('button', { name: 'Virtual Company', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Create a test company and save permissions', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Open test page', exact: true }).click();
+  const companyCase = page.locator('.test-card').filter({
+    has: page.getByRole('button', { name: 'Create a test company and save permissions', exact: true })
+  });
+  await companyCase.getByRole('button', { name: 'Open test page', exact: true }).click();
   await expect(panel.locator('iframe')).toHaveAttribute('src', `http://127.0.0.1:${company.address().port}/test-companies/new`);
   await expect(panel.locator('iframe').contentFrame().getByRole('heading', { name: 'Synthetic test company creation' })).toBeVisible();
   await panel.getByRole('button', { name: 'Close tested application panel' }).click();
@@ -123,7 +126,7 @@ try {
   await page.getByLabel('Number of test cases').fill('3');
   await page.getByRole('button', { name: 'Generate test cases', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Review generated cases' })).toBeVisible();
-  assert.equal((await api(origin, '/api/catalog')).tests.length, 7, 'Proposal preview must not create cases.');
+  assert.equal((await api(origin, '/api/catalog')).tests.length, catalog.tests.length, 'Proposal preview must not create cases.');
   const [proposal] = await api(origin, `/api/suites/${suite.id}/proposals`);
   await page.locator('.proposal-case').first().getByLabel('Case title', { exact: true }).fill('Owner saves draft permissions');
   await page.getByLabel('Include case 3').uncheck();
@@ -172,7 +175,7 @@ try {
   release(); mode = 'success'; await first;
   const crossSuite = seeded.find(s => s.applicationId === 'writerapp');
   await reject(`/api/suites/${crossSuite.id}/proposals/${proposal.id}/apply`, { cases: [proposed(0)] });
-  assert.equal((await api(origin, '/api/catalog')).tests.length, 9);
+  assert.equal((await api(origin, '/api/catalog')).tests.length, catalog.tests.length + 2);
   assert.deepEqual(await api(origin, `/api/runs/${legacyId}`), restored);
   await dashboard.stop(); await dashboard.start();
   assert.deepEqual((await api(origin, `/api/suites/${suite.id}`)).testIds, saved.testIds);

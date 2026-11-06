@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { repositoryRoot, api } from '../src/settings.mjs';
 import { runCommand, boundedLog } from '../src/processes.mjs';
 import { buildWriterApp, launchWriterApp, buildVersion } from '../src/writerapp-host.mjs';
-import { executeRun } from '../src/runner.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 import { executeJob, jobConfiguration } from '../src/jobs.mjs';
 import { dashboardHost } from './dashboard-host.mjs';
 
@@ -30,7 +30,7 @@ try {
   baselineHost = await launchWriterApp({ build: baselineBuild, resultCommit: baseCommit, signal: AbortSignal.timeout(600000), log: boundedLog(path.join(dataPath, 'baseline-launch.log')) });
   await api(dashboard.origin, '/api/applications/writerapp/profile', baselineHost.target);
   const original = await api(dashboard.origin, '/api/runs', { testId: 'writerapp-create-save' });
-  const originalClaim = await api(dashboard.origin, '/api/worker/claim', {});
+  const originalClaim = await api(dashboard.origin, '/api/worker/claim', workerClaim);
   const originalResult = await executeRun(originalClaim, configuration); assert.equal(originalResult.status, 'passed', originalResult.error);
   const feedback = await api(dashboard.origin, `/api/runs/${original.id}/feedback`, {
     stepId: 'library',
@@ -40,7 +40,7 @@ try {
   const draft = await api(dashboard.origin, '/api/jobs', { runId: original.id, feedbackId: feedback.id });
   assert.equal(draft.startBlocker, null);
   await api(dashboard.origin, `/api/jobs/${draft.id}/start`, { revision: draft.revision });
-  const claim = await api(dashboard.origin, '/api/worker/jobs/claim', {}); assert.equal(claim.job.id, draft.id);
+  const claim = await api(dashboard.origin, '/api/worker/jobs/claim', workerClaim); assert.equal(claim.job.id, draft.id);
   let cursor = 0, polling = false;
   progressTimer = setInterval(async () => {
     if (polling) return; polling = true;

@@ -1,3 +1,4 @@
+import { workerClaim } from '../src/run-execution.mjs';
 // Synthetic API contract coverage. Live business acceptance is a separate opt-in test.
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -33,7 +34,7 @@ try {
   assert.equal((await api(origin, '/api/runs')).length, 0);
   const run = await api(origin, '/api/runs', { testId: 'virtual-company-workflow' });
   await api(origin, '/api/applications/virtual-company/profile', { ...profile, expectedBuildVersion: 'future-build' });
-  const claim = await api(origin, '/api/worker/claim', {}); assert.equal(claim.run.target.expectedBuildVersion, 'contract-1');
+  const claim = await api(origin, '/api/worker/claim', workerClaim); assert.equal(claim.run.target.expectedBuildVersion, 'contract-1');
   const directory = path.join(data, 'evidence', run.id); await mkdir(directory, { recursive: true });
   // Registered placeholder files are solely for server validation, never live evidence.
   const steps = [];
@@ -43,7 +44,9 @@ try {
   }
   await writeFile(path.join(directory, 'trace.zip'), 'synthetic contract placeholder');
   const completion = { lease: claim.lease, status: 'passed', buildVersion: profile.expectedBuildVersion, baseUrl: profile.baseUrl, steps, trace: `${run.id}/trace.zip`,
-    identity: { userId: profile.expectedUserId, evidenceKind: 'live-application', roles: ['owner'], companyId: '05050505-0505-0505-0505-050505050505', isolationCompanyId: profile.expectedCompanyId } };
+    runtime: { verifiedAfter: true, fixtures: [] },
+    identity: { userId: profile.expectedUserId, evidenceKind: 'live-application', roles: ['owner'], companyId: '05050505-0505-0505-0505-050505050505', isolationCompanyId: profile.expectedCompanyId,
+      resources: [{ kind: 'company', id: '05050505-0505-0505-0505-050505050505', scopeId: profile.expectedCompanyId }] } };
   for (const invalid of [{ companyId: null }, { companyId: profile.expectedCompanyId }, { isolationCompanyId: null }, { roles: ['employee'] }, { userId: 'other' }])
     await reject(`/api/runs/${run.id}/complete`, { ...completion, identity: { ...completion.identity, ...invalid } });
   const result = await api(origin, `/api/runs/${run.id}/complete`, completion); assert.equal(result.acceptance, 'pending');

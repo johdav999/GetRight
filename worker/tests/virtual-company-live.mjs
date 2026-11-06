@@ -10,7 +10,7 @@ import { runCommand, boundedLog } from '../src/processes.mjs';
 import { buildVersion } from '../src/writerapp-host.mjs';
 import { buildVirtualCompany, launchVirtualCompany } from '../src/virtual-company-host.mjs';
 import { jobConfiguration, executeJob } from '../src/jobs.mjs';
-import { executeRun } from '../src/runner.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 import { dashboardHost } from './dashboard-host.mjs';
 
 const cycle = process.argv.includes('--cycle');
@@ -40,7 +40,7 @@ try {
   host = await launchVirtualCompany({ build, resultCommit: baseCommit, signal: AbortSignal.timeout(1800000), log: boundedLog(path.join(dataPath, 'baseline-launch.log')) });
   await api(dashboard.origin, '/api/applications/virtual-company/profile', host.target);
   const original = await api(dashboard.origin, '/api/runs', { testId: 'virtual-company-workflow' });
-  report.original = await executeRun(await api(dashboard.origin, '/api/worker/claim', {}), configuration);
+  report.original = await executeRun(await api(dashboard.origin, '/api/worker/claim', workerClaim), configuration);
   await writeFile(path.join(dataPath, 'cycle-report.json'), JSON.stringify(report, null, 2));
   assert.equal(report.original.status, 'passed', report.original.error);
   assert.equal(report.original.acceptance, 'pending');
@@ -67,7 +67,7 @@ try {
       try { for (const event of await api(dashboard.origin, `/api/jobs/${draft.id}/events?after=${cursor}`)) { cursor = event.sequence; console.log(`${event.stage}: ${event.message.slice(0, 150)}`); } }
       catch { } finally { busy = false; }
     }, 3000);
-    report.job = await executeJob(await api(dashboard.origin, '/api/worker/jobs/claim', {}), configuration);
+    report.job = await executeJob(await api(dashboard.origin, '/api/worker/jobs/claim', workerClaim), configuration);
     await writeFile(path.join(dataPath, 'cycle-report.json'), JSON.stringify(report, null, 2));
     assert.equal(report.job.status, 'awaiting-review', report.job.error); assert(report.job.threadId);
     report.rerun = await api(dashboard.origin, `/api/runs/${report.job.rerunId}`);

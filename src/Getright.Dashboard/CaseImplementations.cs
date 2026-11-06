@@ -22,7 +22,7 @@ public record CaseImplementationJob(string Id, string TestId, string Application
     string? ResultCommit = null, string? EngineDigest = null, string? PlanJson = null, string? PlanDigest = null,
     ApplicationProfile? ValidationTarget = null, List<string>? ValidationRunIds = null,
     string? Error = null, bool CancelRequested = false, string? RetryOfJobId = null, RetainedWorkflow? RetainedPlan = null,
-    string? BatchId = null, CaseSharedBuild? SharedBuild = null);
+    string? BatchId = null, CaseSharedBuild? SharedBuild = null, BuildRecipeReference? Recipe = null);
 public record CaseImplementationClaim(CaseImplementationJob Job, string Lease);
 public record CaseImplementationBatch(string Id, List<CaseImplementationClaim> Claims);
 public record ApproveCaseRequest(string DefinitionDigest);
@@ -31,9 +31,15 @@ public record CaseImplementationReport(string Lease, string Stage, string Messag
     string? PlatformBaseCommit = null, string? WorktreePath = null, string? ApplicationWorktree = null,
     string? ThreadId = null, string? ResultCommit = null, string? EngineDigest = null,
     string? PlanJson = null, ApplicationProfile? ValidationTarget = null, CaseSharedBuild? SharedBuild = null);
-public record CaseValidationRequest(string Lease, int Ordinal);
+public record CaseValidationRequest(string Lease, int Ordinal, WorkerExecution? Worker = null);
 public record CaseImplementationFinish(string Lease, string Status, string? Error = null);
-public record WorkerClaimRequest(string? WorkflowEngineDigest = null, bool SupportsStepControl = false);
+public record WorkerClaimRequest(string? WorkflowEngineDigest = null, bool SupportsStepControl = false, int? RunConfigurationVersion = null,
+    int? RuntimeContractVersion = null, int? ConfiguredWorkflowVersion = null, string? ConfiguredWorkflowDigest = null, int? BuildRecipeVersion = null,
+    int? IntegrationContractVersion = null)
+{
+    public WorkerExecution? Execution => RunConfigurationVersion is { } version && WorkflowEngineDigest is { } digest ?
+        new(version, digest, RuntimeContractVersion, ConfiguredWorkflowVersion, ConfiguredWorkflowDigest, IntegrationContractVersion) : null;
+}
 
 public static class WorkflowContract
 {
@@ -211,6 +217,10 @@ public sealed partial class RunStore
     private CaseImplementationReadiness CheckImplementationPrerequisites(UatTest test, ApplicationProfile? target)
     {
         var engine = WorkflowContract.LocalEngineDigest();
+        if (test.Readiness == "draft" && test.Workflow is not null)
+            return new(false, "This draft already has an authored workflow. Verify it with its isolated host before enabling it.", EngineDigest: engine);
+        if (test.ApplicationId != "getright" && Manifests.Get(test.ApplicationId).BuildRecipe is null)
+            return new(false, "This application supports testing and has no build recipe for implementation.", EngineDigest: engine);
         // Search all history, including blockers behind cancelled attempts or
         // older than the ordinary 100-row history page. Never rewrite that history.
         using var db = Open(); using var command = db.CreateCommand();
@@ -280,7 +290,7 @@ public sealed partial class RunStore
             if (test.ApplicationId != "getright")
             {
                 if (approvedTarget?.ApplicationId != test.ApplicationId) throw new ArgumentException("Configure the isolated application first.");
-                ApplicationSetup.Validate(approvedTarget);
+                ApplicationSetup.Validate(approvedTarget, Manifests.Get(test.ApplicationId));
                 if (!JobStates.Hash(approvedTarget.SourceCommit) || approvedTarget.SourceWasDirty) throw new ArgumentException("Import a clean committed application's launch receipt before implementing its test.");
             }
             if (CaseJobs(id).FirstOrDefault(j => j.Status == "queued" || CaseImplementationStates.Active(j.Status)) is { } active) return active;
@@ -295,32 +305,37 @@ public sealed partial class RunStore
                     retained = new(binding, thread);
             }
             var job = new CaseImplementationJob(Guid.NewGuid().ToString("N"), id, test.ApplicationId, "queued",
-                test with { Readiness = "draft", Adapter = null, Implementation = null }, request.DefinitionDigest, approvedTarget, now, now, RetryOfJobId: retryOfJobId, RetainedPlan: retained);
+                test with { Readiness = "draft", Adapter = null, Implementation = null }, request.DefinitionDigest, approvedTarget, now, now, RetryOfJobId: retryOfJobId, RetainedPlan: retained,
+                Recipe: approvedTarget is null ? null : Manifests.Get(test.ApplicationId).BuildRecipe);
             SaveCaseJob(job); CaseEvent(job, retryOfJobId is null
                 ? "Test description approved for implementation. The case stays disabled until two isolated validation runs pass."
                 : $"Single-case generation retry queued from attempt {retryOfJobId}. Previous logs and evidence are retained; two fresh validation runs are required."); return job;
         }
     }
-    public CaseImplementationClaim? ClaimCaseJob()
+    private static string ClaimableCases(WorkerClaimRequest? worker) => worker?.BuildRecipeVersion == 1
+        ? "WHERE json_extract(payload,'$.status')='queued'"
+        : "WHERE json_extract(payload,'$.status')='queued' AND json_extract(payload,'$.recipe') IS NULL";
+
+    public CaseImplementationClaim? ClaimCaseJob(WorkerClaimRequest? worker)
     {
         lock (gate)
         {
-            ExpireCaseJobs(); var job = ReadCaseJobs("WHERE json_extract(payload,'$.status')='queued' ORDER BY rowid LIMIT 1").FirstOrDefault();
+            ExpireCaseJobs(); var job = ReadCaseJobs(ClaimableCases(worker) + " ORDER BY rowid LIMIT 1").FirstOrDefault();
             if (job is null) return null;
             job = job with { Status = "preparing", UpdatedAt = DateTimeOffset.UtcNow }; var lease = Guid.NewGuid().ToString("N");
             SaveCaseJob(job, lease, DateTimeOffset.UtcNow.AddSeconds(45)); CaseEvent(job, "Implementation claimed by the local worker."); return new(job, lease);
         }
     }
-    public CaseImplementationBatch? ClaimCaseBatch()
+    public CaseImplementationBatch? ClaimCaseBatch(WorkerClaimRequest? worker)
     {
         lock (gate)
         {
             ExpireCaseJobs();
-            var queued = ReadCaseJobs("WHERE json_extract(payload,'$.status')='queued' ORDER BY rowid LIMIT 10");
+            var queued = ReadCaseJobs(ClaimableCases(worker) + " ORDER BY rowid LIMIT 10");
             if (queued.Count == 0) return null;
             var first = queued[0];
             var selected = queued.TakeWhile(j => j.ApplicationId == first.ApplicationId &&
-                j.ApprovedTarget?.SourceCommit == first.ApprovedTarget?.SourceCommit).ToList();
+                j.ApprovedTarget?.SourceCommit == first.ApprovedTarget?.SourceCommit && j.Recipe == first.Recipe).ToList();
             var batchId = Guid.NewGuid().ToString("N"); var claims = new List<CaseImplementationClaim>(); var now = DateTimeOffset.UtcNow;
             using var db = Open(); using var transaction = db.BeginTransaction();
             foreach (var candidate in selected)
@@ -372,7 +387,10 @@ public sealed partial class RunStore
             }
             if (request.ValidationTarget is { } supplied)
             {
-                ApplicationSetup.Validate(supplied);
+                ApplicationSetup.Validate(supplied, Manifests.Get(job.ApplicationId));
+                if ((job.Recipe is not null && supplied.BuildReceipt?.ValidFor(job.Recipe) != true) ||
+                    (shared is not null && supplied.BuildReceipt is { } receipt && (receipt.ArtifactDigest != shared.ArtifactDigest || receipt.RecipeDigest != shared.RecipeDigest)))
+                    throw new ArgumentException("Validation must use the sealed artifact from its selected build recipe.");
                 if (supplied.ApplicationId != job.ApplicationId || supplied.SourceCommit != job.ApprovedTarget?.SourceCommit || supplied.SourceWasDirty ||
                     (shared is not null && supplied.ExpectedBuildVersion != shared.BuildVersion) ||
                     (job.ValidationTarget is not null && job.ValidationTarget != supplied)) throw new ArgumentException("Validation must use the approved clean application revision.");
@@ -404,7 +422,10 @@ public sealed partial class RunStore
             var binding = new WorkflowImplementation(job.Id, job.DefinitionDigest, job.PlanJson!, job.PlanDigest!, job.EngineDigest!, job.PlatformBaseCommit!, job.ResultCommit!, job.ApprovedTarget?.SourceCommit, [], DateTimeOffset.UtcNow);
             var runId = Guid.NewGuid().ToString("N"); var runLease = Guid.NewGuid().ToString("N"); var now = DateTimeOffset.UtcNow;
             var run = new UatRun(runId, job.TestId, job.ApplicationId, "running", "pending", now, now, null, $"uat-{runId}", null, null, [], null, null,
-                job.TestSnapshot with { Adapter = WorkflowContract.Adapter, Readiness = "validating", Implementation = binding }, job.ValidationTarget, CaseImplementationJobId: job.Id);
+                job.TestSnapshot with { Adapter = WorkflowContract.Adapter, Readiness = "validating", Implementation = binding }, job.ValidationTarget, CaseImplementationJobId: job.Id, Worker: request.Worker);
+            var snapshot = Manifests.Freeze(run);
+            ApplicationManifests.RequireWorker(snapshot, request.Worker);
+            run = run with { Configuration = snapshot };
             job = job with { ValidationRunIds = [.. previous, runId], UpdatedAt = now };
             using var db = Open(); using var transaction = db.BeginTransaction(); using var cmd = db.CreateCommand(); cmd.Transaction = transaction;
             cmd.CommandText = "INSERT INTO runs(id,payload,lease,lease_expires) VALUES($run,$payload,$lease,$expires); UPDATE case_implementation_jobs SET payload=$job WHERE id=$id";

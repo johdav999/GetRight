@@ -1,0 +1,27 @@
+{
+  "id": "writerapp-api-readiness",
+  "applicationId": "writerapp",
+  "title": "Verify the WriterApp build and test account over HTTP",
+  "purpose": "Confirm that the configured isolated instance serves the expected build and dedicated account.",
+  "readiness": "setup-required",
+  "adapter": "configured-v2",
+  "reviewQuestion": "Do the observations identify the expected isolated instance?",
+  "steps": [
+    { "id": "build", "title": "Check the running build", "expected": "The version endpoint matches the launch receipt." },
+    { "id": "account", "title": "Check the test account", "expected": "The authenticated account matches the launch receipt." }
+  ],
+  "workflow": {
+    "version": 2,
+    "reviewPath": "/app/documents",
+    "steps": [
+      { "stepId": "build", "actions": [
+        { "kind": "request", "http": { "path": "/api/app/version", "assertions": [{ "field": "version", "binding": "build" }] } }
+      ] },
+      { "stepId": "account", "actions": [
+        { "kind": "request", "http": { "path": "/api/auth/me", "assertions": [
+          { "field": "isAuthenticated", "equalsValue": true }, { "field": "userId", "binding": "identity" }
+        ] } }
+      ] }
+    ]
+  }
+}

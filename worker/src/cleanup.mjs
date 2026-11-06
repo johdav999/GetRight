@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { lstat, realpath, readdir, unlink, rmdir } from 'node:fs/promises';
 import { api } from './settings.mjs';
-import { jobConfiguration } from './jobs.mjs';
+import { jobConfiguration } from './build-recipes.mjs';
 import { runCommand, cleanEnvironment } from './processes.mjs';
 import { supervise } from './supervision.mjs';
 
@@ -28,7 +28,7 @@ export async function removeEvidence(task, configuration) {
 }
 export async function removeWorktree(task, configuration) {
   if (!/^[a-f0-9]{32}$/.test(task.resourceId)) throw new Error('Invalid worktree resource.');
-  const options = await jobConfiguration(configuration, task.applicationId);
+  const options = await jobConfiguration(configuration, task.applicationId, task.recipe);
   const root = await realpath(options.worktreeRoot);
   const expected = path.join(root, task.resourceId.slice(0, 12));
   if (!task.worktreePath || !same(expected, task.worktreePath) || !/^[a-f0-9]{40,64}$/i.test(task.commit || '')) throw new Error('The recorded worktree is outside the configured job directory or has no retained commit.');

@@ -29,11 +29,18 @@ public sealed partial class RunStore
 {
     private void SeedSuites(SqliteConnection db, SqliteTransaction transaction)
     {
+        using var command = db.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "INSERT OR IGNORE INTO test_suites(id,payload) VALUES($id,$payload)";
+        var id = command.Parameters.AddWithValue("$id", "");
+        var payload = command.Parameters.AddWithValue("$payload", "");
         foreach (var application in catalogue.Value.Applications)
         {
             var suite = new TestSuite($"{application.Id}-suite", application.Id, $"{application.Name} UAT",
                 application.Description, catalogue.Value.Tests.Where(t => t.ApplicationId == application.Id).Select(t => t.Id).ToList(), 1, DateTimeOffset.UtcNow);
-            WriteSuite(db, transaction, suite);
+            id.Value = suite.Id;
+            payload.Value = JsonSerializer.Serialize(suite, AppJson.Options);
+            command.ExecuteNonQuery();
         }
     }
     private static void WriteSuite(SqliteConnection db, SqliteTransaction transaction, TestSuite suite)
@@ -80,6 +87,13 @@ public sealed partial class RunStore
                 var binding = JsonSerializer.Deserialize<WorkflowImplementation>(bindings.GetString(1), AppJson.Options)!;
                 if (DefinitionDigest(result[index]) == binding.DefinitionDigest)
                     result[index] = result[index] with { Readiness = currentEngine == binding.EngineDigest ? "ready" : "reverification-required", Adapter = "declarative-v1", Implementation = binding };
+            }
+            bindings.Close();
+            foreach (var workflow in ManagedWorkflows())
+            {
+                var manifest = Manifests.Get(workflow.Test.ApplicationId);
+                var state = Qualification(workflow, manifest, Profile(workflow.Test.ApplicationId));
+                result.Add(workflow.Test with { Readiness = state.Qualified ? "setup-required" : "qualification-required" });
             }
             return result;
         }

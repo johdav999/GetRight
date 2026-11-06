@@ -1,0 +1,19 @@
+{
+  "writerapp-dotnet": {
+    "version": 1,
+    "applicationId": "writerapp",
+    "repositoryPath": "../WriterApp",
+    "sourceMarker": "BlazorApp.csproj",
+    "extension": "writerapp-dotnet",
+    "buildTimeoutMs": 300000
+  },
+  "virtual-company-dotnet": {
+    "version": 1,
+    "applicationId": "virtual-company",
+    "repositoryPath": "../Virtual Company",
+    "sourceMarker": "VirtualCompany.sln",
+    "sparsePaths": ["/*", "!/*/", "/src/", "/tests/", "/docs/", "/.design-addin/", "/.agents/", "!/src/VirtualCompany.Api/App_Data/"],
+    "extension": "virtual-company-dotnet",
+    "buildTimeoutMs": 600000
+  }
+}

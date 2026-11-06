@@ -4,7 +4,7 @@ import path from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { chromium, expect } from '@playwright/test';
 import { api, repositoryRoot } from '../src/settings.mjs';
-import { executeRun } from '../src/runner.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 import { dashboardHost } from './dashboard-host.mjs';
 import { createWriterAppContractHost } from './writerapp-contract-host.mjs';
 
@@ -17,7 +17,7 @@ const report = { scope: 'Control room quick review above workflow details; synth
   observed: 'Acceptance, comments and improvement preparation required opening a nested run-review page.',
   expected: 'Review, comment, preview and explicitly queue an improvement from the right panel above Workflow detail, retaining immutable run/step provenance.', status: 'open' }] };
 const queue = testId => api(origin, '/api/runs', { testId });
-const run = async testId => { await queue(testId); const completed = await executeRun(await api(origin, '/api/worker/claim', {}), configuration); assert.equal(completed.status, 'passed', completed.error); return completed; };
+const run = async testId => { await queue(testId); const completed = await executeRun(await api(origin, '/api/worker/claim', workerClaim), configuration); assert.equal(completed.status, 'passed', completed.error); return completed; };
 try {
   browser = await chromium.launch({ headless: true }); const page = await browser.newPage({ viewport: { width: 1500, height: 1100 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
@@ -26,7 +26,7 @@ try {
   const waiting = await queue('getright-save-note'); await page.reload();
   await expect(panel.getByRole('button', { name: 'Accept this run', exact: true })).toBeDisabled();
   await expect(panel.getByLabel('What needs improving?', { exact: true })).toBeDisabled();
-  const completed = await executeRun(await api(origin, '/api/worker/claim', {}), configuration);
+  const completed = await executeRun(await api(origin, '/api/worker/claim', workerClaim), configuration);
   assert.equal(completed.id, waiting.id); assert.equal(completed.acceptance, 'pending');
   await expect(panel.getByRole('button', { name: 'Accept this run', exact: true })).toBeEnabled();
   await panel.getByRole('button', { name: 'Accept this run', exact: true }).click(); await expect(panel.getByRole('status')).toContainText('Review saved');

@@ -7,7 +7,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {chromium,expect} from '@playwright/test';
 import {api,repositoryRoot} from '../src/settings.mjs';
 import {dashboardHost} from './dashboard-host.mjs';
-import {executeRun} from '../src/runner.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 
 const dataPath=path.join(repositoryRoot,'.local',`live-dock-${Date.now()}`),dashboard=await dashboardHost(dataPath),origin=dashboard.origin;
 const report={scope:'Real docked worker pixels/input/session lifetime and immutable run evidence; disposable demo',flows:[],issues:[]};
@@ -42,7 +42,7 @@ try{
  assert((await details.boundingBox()).x >= (await panel.boundingBox()).width);
  const [queued]=await api(origin,'/api/runs');assert.equal(queued.docked,true);
  await expect(page).toHaveURL(`${origin}/runs/${queued.id}/watch`);
- const claim=await api(origin,'/api/worker/claim',{});let reviewPage,ready;
+ const claim=await api(origin,'/api/worker/claim',workerClaim);let reviewPage,ready;
  const reviewReady=new Promise(resolve=>ready=resolve);
  execution=executeRun(claim,{dashboardUrl:origin,dataPath,headless:true,onReviewReady:({browser,run})=>{workerBrowser=browser;reviewPage=browser.contexts()[0].pages()[0];ready(run);}});
  await expect(viewer).toHaveAttribute('data-phase','automating',{timeout:15000});
@@ -118,10 +118,10 @@ try{
  assert.deepEqual(await readFile(path.join(dataPath,'evidence',frozen.trace)),trace);
  report.flows.push({id:'DOCK-001',name:'Automatic docking, real frames, input locked during automation, manual same-session input, undock/reload, finish/reopen, immutable evidence/pending acceptance and mobile',status:'verified',runId:queued.id});
 
- const auto=await api(origin,'/api/runs',{testId:'getright-save-note',docked:true});const autoResult=await executeRun(await api(origin,'/api/worker/claim',{}),{dashboardUrl:origin,dataPath,headless:true,keepBrowserOpen:false});assert.equal(autoResult.status,'passed');assert.equal((await api(origin,`/api/runs/${auto.id}/browser`)).phase,'closed');
+ const auto=await api(origin,'/api/runs',{testId:'getright-save-note',docked:true});const autoResult=await executeRun(await api(origin,'/api/worker/claim',workerClaim),{dashboardUrl:origin,dataPath,headless:true,keepBrowserOpen:false});assert.equal(autoResult.status,'passed');assert.equal((await api(origin,`/api/runs/${auto.id}/browser`)).phase,'closed');
  const stopped=await api(origin,'/api/runs',{testId:'getright-save-note',docked:true}),controller=new AbortController();
- const stoppedResult=await executeRun(await api(origin,'/api/worker/claim',{}),{dashboardUrl:origin,dataPath,headless:true,signal:controller.signal,onReviewReady:()=>controller.abort(new Error('Disposable worker shutdown.'))});assert.equal(stoppedResult.status,'passed');assert.equal(stoppedResult.acceptance,'pending');assert.equal((await api(origin,`/api/runs/${stopped.id}/browser`)).phase,'closed');
- const timeout=await api(origin,'/api/runs',{testId:'getright-save-note',docked:true});const timed=await executeRun(await api(origin,'/api/worker/claim',{}),{dashboardUrl:origin,dataPath,headless:true,runTimeoutMs:1000});assert.equal(timed.status,'failed');assert.equal((await api(origin,`/api/runs/${timeout.id}/browser`)).phase,'closed');
+ const stoppedResult=await executeRun(await api(origin,'/api/worker/claim',workerClaim),{dashboardUrl:origin,dataPath,headless:true,signal:controller.signal,onReviewReady:()=>controller.abort(new Error('Disposable worker shutdown.'))});assert.equal(stoppedResult.status,'passed');assert.equal(stoppedResult.acceptance,'pending');assert.equal((await api(origin,`/api/runs/${stopped.id}/browser`)).phase,'closed');
+ const timeout=await api(origin,'/api/runs',{testId:'getright-save-note',docked:true});const timed=await executeRun(await api(origin,'/api/worker/claim',workerClaim),{dashboardUrl:origin,dataPath,headless:true,runTimeoutMs:1000});assert.equal(timed.status,'failed');assert.equal((await api(origin,`/api/runs/${timeout.id}/browser`)).phase,'closed');
  report.flows.push({id:'DOCK-002',name:'Explicit auto-close, worker shutdown and automation timeout close owned sessions while retaining independent results',status:'verified'});
  console.log(`PASS: actual docked automation/manual review, same-session undock, protected input, immutable evidence, closure and mobile. Evidence: ${dataPath}`);
 }finally{await workerBrowser?.close().catch(()=>{});await execution?.catch(()=>{});await browser?.close();await dashboard.stop();await writeFile(path.join(dataPath,'live-dock-report.json'),JSON.stringify(report,null,2));}

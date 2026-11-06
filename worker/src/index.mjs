@@ -6,7 +6,7 @@ import { executeCleanup } from './cleanup.mjs';
 import { executeJob } from './jobs.mjs';
 import { executeCaseImplementation } from './case-implementation.mjs';
 import { executeCaseImplementationBatch } from './case-batch.mjs';
-import { workflowEngineDigest } from './workflow-engine.mjs';
+import { workerClaim } from './run-execution.mjs';
 import { workerSourceStamp, reloadExitCode } from './worker-version.mjs';
 
 const configuration = settings();
@@ -37,11 +37,11 @@ do {
     }
     presence ??= await workerPresence(configuration, () => sessions.reviewRunIds);
     let implementation;
-    try { implementation = await api(configuration.dashboardUrl, `/api/worker/case-implementations/${once ? 'claim' : 'claim-batch'}`, {}); }
+    try { implementation = await api(configuration.dashboardUrl, `/api/worker/case-implementations/${once ? 'claim' : 'claim-batch'}`, workerClaim); }
     catch (error) {
       // An updated worker can still service an older local dashboard while its
       // next guarded upgrade is pending. Older servers retain single-case builds.
-      if (!once && error.message.startsWith('Getright API 404:')) implementation = await api(configuration.dashboardUrl, '/api/worker/case-implementations/claim', {});
+      if (!once && error.message.startsWith('Getright API 404:')) implementation = await api(configuration.dashboardUrl, '/api/worker/case-implementations/claim', workerClaim);
       else throw error;
     }
     if (implementation) {
@@ -62,7 +62,7 @@ do {
       if (!once && !stopping) await delay(2000);
       continue;
     }
-    const job = await api(configuration.dashboardUrl, '/api/worker/jobs/claim', {});
+    const job = await api(configuration.dashboardUrl, '/api/worker/jobs/claim', workerClaim);
     if (job) {
       await presence.set('improvement', [job.job.id]);
       console.log(`Implementing ${job.job.id} in a dedicated worktree.`);
@@ -77,7 +77,7 @@ do {
         console.log(`Cleanup ${cleanup.task.id}: ${result.status}.`);
         if (once && result.status !== 'completed') process.exitCode = 1;
       } else {
-        const claim = await api(configuration.dashboardUrl, '/api/worker/claim', { workflowEngineDigest, supportsStepControl: true });
+        const claim = await api(configuration.dashboardUrl, '/api/worker/claim', workerClaim);
         if (claim) {
           await presence.set('run', [claim.run.id]);
           console.log(`Running ${claim.run.testId} (${claim.run.id})`);

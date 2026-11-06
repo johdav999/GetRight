@@ -1,3 +1,4 @@
+import { workerClaim } from '../src/run-execution.mjs';
 // Native Windows launcher and cross-process database ownership checks.
 // Uses copied build outputs and disposable databases, never the user's dashboard.
 import assert from 'node:assert/strict';
@@ -64,7 +65,7 @@ try {
   assert.match((await script('start-virtual-company.ps1', ['-NoDashboardBuild'], true, {Getright__DataPath:path.join(data,'wrong-database')})).output, /different data directory/);
   assert.equal((await probe()).length, 2, 'A data mismatch must refuse before VC starts.');
   const run = await api(origin, '/api/runs', { testId: 'getright-save-note' });
-  const claim = await api(origin, '/api/worker/claim', {});
+  const claim = await api(origin, '/api/worker/claim', workerClaim);
   for (let i = 0; i < 102; i++) { const filler = await api(origin, '/api/runs', { testId: 'getright-save-note' }); await api(origin, `/api/runs/${filler.id}/cancel`, {}); }
   assert(!(await api(origin, '/api/runs')).some(r => r.id === run.id), 'The active original is intentionally older than the recent-100 window.');
   assert.equal((await api(origin, '/api/operations/active')).runs, 1);
@@ -103,10 +104,10 @@ try {
   assert.deepEqual(await api(origin, '/api/case-implementations'), retainedQueue);
   assert.deepEqual(await api(origin, `/api/runs/${run.id}`), terminal);
   assert.deepEqual(await api(origin, `/api/runs/${preservedRun.id}`),preservedRun);
-  const activeRun=await api(origin,'/api/worker/claim',{supportsStepControl:true});assert.equal(activeRun.run.id,preservedRun.id);
+  const activeRun=await api(origin,'/api/worker/claim',workerClaim);assert.equal(activeRun.run.id,preservedRun.id);
   assert.match((await script('start-dashboard.ps1', ['-Restart', '-PreserveQueued', '-NoBuild', '-Background'],true)).output,/queued or running work/);
   await api(origin,`/api/runs/${preservedRun.id}/cancel`,{});await api(origin,`/api/runs/${preservedRun.id}/complete`,{lease:activeRun.lease,status:'cancelled',steps:[]});
-  const caseClaim = await api(origin, '/api/worker/case-implementations/claim', {});
+  const caseClaim = await api(origin, '/api/worker/case-implementations/claim', workerClaim);
   assert.match((await script('start-dashboard.ps1', ['-Restart', '-PreserveQueued', '-NoBuild', '-Background'], true)).output, /queued or running work/);
   assert.equal((await api(origin, '/api/health')).instanceId, queueReload.instanceId);
   await api(origin, `/api/case-implementations/${queuedId}/report`, { lease: caseClaim.lease, stage: 'planning', message: 'Disposable source-only planning fixture.', platformBaseCommit: 'a'.repeat(40), worktreePath: path.join(dataPath, 'planning-source') });

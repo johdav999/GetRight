@@ -8,8 +8,29 @@
     {
       "id": "getright-save-note", "applicationId": "getright", "title": "Create, save and reopen a note",
       "purpose": "Verify the runner, persistence checks, evidence capture and human review using a disposable fixture.",
-      "readiness": "ready", "adapter": "getright-save-note",
+      "readiness": "ready", "adapter": "configured-v2",
       "reviewQuestion": "Is the save confirmation clear, and does the note remain easy to find?",
+      "workflow": { "version": 2, "reviewPath": "/uat-fixture.html", "steps": [
+        { "stepId": "open", "actions": [
+          {"kind":"goto","path":"/uat-fixture.html?fixture={{fixtureId}}","timeoutMs":15000},
+          {"kind":"expect-visible","locator":{"role":"heading","name":"Your working note"},"timeoutMs":15000},
+          {"kind":"expect-value","locator":{"label":"Title"},"value":""}
+        ] },
+        { "stepId": "edit", "actions": [
+          {"kind":"fill","locator":{"label":"Title"},"value":"UAT note {{unique}}"},
+          {"kind":"fill","locator":{"label":"Note"},"value":"Saved fixture content for {{fixtureId}}."},
+          {"kind":"expect-value","locator":{"label":"Note"},"value":"Saved fixture content for {{fixtureId}}."}
+        ] },
+        { "stepId": "save", "actions": [
+          {"kind":"click","locator":{"role":"button","name":"Save note"}},
+          {"kind":"expect-text","locator":{"role":"status"},"value":"Note saved successfully."}
+        ] },
+        { "stepId": "reopen", "actions": [
+          {"kind":"reload","timeoutMs":15000},
+          {"kind":"expect-value","locator":{"label":"Title"},"value":"UAT note {{unique}}"},
+          {"kind":"expect-value","locator":{"label":"Note"},"value":"Saved fixture content for {{fixtureId}}."}
+        ] }
+      ] },
       "steps": [
         { "id": "open", "title": "Open the isolated note workspace", "expected": "An empty editor is available for this run's fixture ID." },
         { "id": "edit", "title": "Write a note", "expected": "The title and text can be entered." },
@@ -19,8 +40,33 @@
     },
     {
       "id": "writerapp-create-save", "applicationId": "writerapp", "title": "Create and save a document",
-      "purpose": "Create a document in an isolated WriterApp instance, save and reopen it.", "readiness": "setup-required", "adapter": "writerapp-create-save",
+      "purpose": "Create a document in an isolated WriterApp instance, save and reopen it.", "readiness": "setup-required", "adapter": "configured-v2",
       "reviewQuestion": "Is creating and saving a document clear and convenient?",
+      "workflow": { "version": 2, "reviewPath": "/app/documents", "steps": [
+        { "stepId": "library", "actions": [
+          {"kind":"extension","extension":{"id":"writerapp-onboarding","version":1},"timeoutMs":15000},
+          {"kind":"goto","path":"/app/documents","timeoutMs":15000},
+          {"kind":"expect-visible","locator":{"css":".prosa-library"},"timeoutMs":15000},
+          {"kind":"extension","extension":{"id":"writerapp-library","version":1},"timeoutMs":15000}
+        ] },
+        { "stepId": "create", "actions": [
+          {"kind":"click","locator":{"css":"button:text-is(\"Create new document\") >> nth=0"},"timeoutMs":15000,"http":{"path":"/api/documents","method":"POST","captures":[{"name":"documentId","field":"document.id","type":"uuid","resourceKind":"document"},{"name":"sectionId","field":"defaultSectionId","type":"uuid"},{"name":"initialTitle","field":"document.title","type":"text"}]}},
+          {"kind":"expect-visible","locator":{"css":".editor-surface .ProseMirror[contenteditable=true] >> nth=0"},"timeoutMs":15000},
+          {"kind":"fill","locator":{"css":".editor-surface .ProseMirror[contenteditable=true] >> nth=0"},"value":"Getright persistence verification for {{fixtureId}}."}
+        ] },
+        { "stepId": "save", "actions": [
+          {"kind":"click","locator":{"role":"button","name":"Document actions"}},
+          {"kind":"click","locator":{"css":"[role=\"group\"][aria-label=\"Document actions\"] button:text-is(\"Save now\")"}},
+          {"kind":"request","http":{"path":"/api/sections/{{sectionId}}/pages","assertions":[{"field":"$","containsText":"Getright persistence verification for {{fixtureId}}."}],"attempts":3},"timeoutMs":15000},
+          {"kind":"expect-text","locator":{"css":".editor-surface .ProseMirror[contenteditable=true] >> nth=0"},"value":"Getright persistence verification for {{fixtureId}}."}
+        ] },
+        { "stepId": "reopen", "actions": [
+          {"kind":"reload","timeoutMs":15000},
+          {"kind":"expect-text","locator":{"css":".editor-surface .ProseMirror[contenteditable=true] >> nth=0"},"value":"Getright persistence verification for {{fixtureId}}.","timeoutMs":15000},
+          {"kind":"request","http":{"path":"/api/documents/{{documentId}}","assertions":[{"field":"title","equalsValue":"{{initialTitle}}"}],"attempts":1},"timeoutMs":15000},
+          {"kind":"request","http":{"path":"/api/sections/{{sectionId}}/pages","assertions":[{"field":"$","containsText":"Getright persistence verification for {{fixtureId}}."}],"attempts":3},"timeoutMs":15000}
+        ] }
+      ] },
       "steps": [
         { "id": "library", "title": "Open the document library", "expected": "The isolated workspace is visible." },
         { "id": "create", "title": "Create a document and enter unique text", "expected": "The new document's editor accepts this run's unique fixture content." },
@@ -58,8 +104,22 @@
       "title": "Create a test company and save permissions",
       "purpose": "Create a synthetic company, save draft-email permissions, reopen it and verify owner access and company isolation.",
       "readiness": "setup-required",
-      "adapter": "virtual-company-test-setup",
+      "adapter": "configured-v2",
       "reviewQuestion": "Can the intended user complete this business workflow confidently?",
+      "workflow": { "version": 2, "reviewPath": "/test-companies/new", "steps": [
+        { "stepId": "workflow", "actions": [
+          {"kind":"extension","extension":{"id":"company-workflow","version":1},"timeoutMs":15000}
+        ] },
+        { "stepId": "create", "actions": [
+          {"kind":"extension","extension":{"id":"company-create","version":1},"timeoutMs":15000}
+        ] },
+        { "stepId": "permissions", "actions": [
+          {"kind":"extension","extension":{"id":"company-permissions","version":1},"timeoutMs":15000}
+        ] },
+        { "stepId": "reopen", "actions": [
+          {"kind":"extension","extension":{"id":"company-reopen","version":1},"timeoutMs":15000}
+        ] }
+      ] },
       "steps": [
         {
           "id": "workflow",
@@ -81,6 +141,122 @@
           "title": "Reopen and verify isolation",
           "expected": "Permissions persist, the reference company is unchanged, and the employee cannot access owner controls."
         }
+      ]
+    },
+    {
+      "id": "virtual-company-finance-cash-source",
+      "applicationId": "virtual-company",
+      "title": "Finance Agent · Verify cash balance and source",
+      "purpose": "Verify that Laura answers a bounded cash question from authoritative company evidence.",
+      "readiness": "draft",
+      "adapter": "configured-v2",
+      "workflow": { "version": 2, "reviewPath": "/finance", "steps": [
+        { "stepId": "ask-en", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] },
+        { "stepId": "ask-sv", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] },
+        { "stepId": "open-source", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] }
+      ] },
+      "preconditions": "Required fixture: a fresh, disconnected test company with an authorized Finance reader and one SEK cash account. Use an explicit as-of time of 2026-10-15T10:00:00Z and seed authoritative cash evidence for 12,345.67 SEK as of that instant. Retain the source record ID and its in-app destination. Use scripted model responses for tool selection and synthesis, with the actual Finance read tool supplying the amounts.",
+      "reviewQuestion": "Can a Finance user verify the amount, timestamp, and underlying source in either language?",
+      "steps": [
+        { "id": "ask-en", "title": "Ask for the current cash balance and its source in English", "expected": "Laura reports 12,345.67 SEK as of the fixture timestamp and shows a source link for the selected company." },
+        { "id": "ask-sv", "title": "Ask the equivalent question in Swedish in a fresh conversation", "expected": "The localized answer preserves the same amount, currency, timestamp, and source record." },
+        { "id": "open-source", "title": "Follow the source link from each answer", "expected": "Both links open the authorized company evidence, which matches the seeded source record and supports the reported amount and timestamp." }
+      ]
+    },
+    {
+      "id": "virtual-company-finance-invoice-ambiguity",
+      "applicationId": "virtual-company",
+      "title": "Finance Agent · Clarify an ambiguous invoice lookup",
+      "purpose": "Verify that Laura asks for clarification when a reference has multiple accessible matches.",
+      "readiness": "draft",
+      "adapter": "configured-v2",
+      "workflow": { "version": 2, "reviewPath": "/finance", "steps": [
+        { "stepId": "ask-ambiguous", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] },
+        { "stepId": "clarify", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] }
+      ] },
+      "preconditions": "Required fixture: a fresh, disconnected test company, an authorized Finance reader, and two accessible invoices numbered INV-1042-A and INV-1042-B. Give them distinct counterparties and totals, with INV-1042-A seeded at 1,250 SEK. The shorter reference INV-1042 should prompt clarification. Use a scripted model that leaves record resolution to the real Finance resolver.",
+      "reviewQuestion": "Does Laura make it clear which detail would distinguish the intended invoice?",
+      "steps": [
+        { "id": "ask-ambiguous", "title": "Ask for the total on invoice INV-1042 without a distinguishing detail", "expected": "Laura requests clarification and makes no definitive claim about either invoice total or identity." },
+        { "id": "clarify", "title": "Provide the full reference that identifies the intended invoice", "expected": "Laura returns 1,250 SEK and links to the intended invoice only. The lookup leaves both invoice records unchanged." }
+      ]
+    },
+    {
+      "id": "virtual-company-finance-invoice-isolation",
+      "applicationId": "virtual-company",
+      "title": "Finance Agent · Block cross-company invoice access",
+      "purpose": "Verify that an invoice ID cannot bypass company isolation in Laura's read flow.",
+      "readiness": "draft",
+      "adapter": "configured-v2",
+      "workflow": { "version": 2, "reviewPath": "/finance", "steps": [
+        { "stepId": "read-own", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] },
+        { "stepId": "request-foreign", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] },
+        { "stepId": "verify-isolation", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] }
+      ] },
+      "preconditions": "Required fixture: two fresh, disconnected test companies, A and B, each with a distinct invoice ID for INV-1042-A. Give B's invoice a unique synthetic counterparty and total. Use a Finance reader authorized only for A. Retain both IDs for assertions and use a scripted model so the real policy and lookup path evaluates the supplied ID.",
+      "reviewQuestion": "Does the response make the failed lookup understandable while keeping the other company private?",
+      "steps": [
+        { "id": "read-own", "title": "As A's reader, look up A's invoice by its exact ID", "expected": "Laura returns A's invoice and its authorized source link." },
+        { "id": "request-foreign", "title": "From the same session, request B's invoice by its exact ID", "expected": "The lookup is denied or returns no accessible match. B's counterparty, amount and source link are absent from the response and returned tool evidence." },
+        { "id": "verify-isolation", "title": "Check the selected company and the fixture records", "expected": "The session remains in A, the foreign ID did not resolve to A's similarly numbered invoice, and neither invoice changed." }
+      ]
+    },
+    {
+      "id": "virtual-company-finance-category-recommendation",
+      "applicationId": "virtual-company",
+      "title": "Finance Agent · Recommend a category without changing the transaction",
+      "purpose": "Verify that an explicit recommendation request produces reviewable advice without applying it.",
+      "readiness": "draft",
+      "adapter": "configured-v2",
+      "workflow": { "version": 2, "reviewPath": "/finance", "steps": [
+        { "stepId": "recommend", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] },
+        { "stepId": "verify-unchanged", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] }
+      ] },
+      "preconditions": "Required fixture: a fresh, disconnected test company with a Finance operator authorized to recommend and eligible to request execution. Seed one uncategorized software-vendor transaction and an eligible Software category. Retain the original persisted transaction and category. Script the model to request a recommendation and configure deterministic recommendation evidence for Software.",
+      "reviewQuestion": "Can the operator distinguish the recommendation from a saved category and understand its rationale?",
+      "steps": [
+        { "id": "recommend", "title": "Ask Laura to recommend a category for the exact transaction", "expected": "Laura proposes Software, explains the evidence, and identifies the transaction. The result is presented as a recommendation awaiting a separate action." },
+        { "id": "verify-unchanged", "title": "Reload the transaction and inspect action history", "expected": "The original uncategorized state and saved transaction fields are preserved. No mutation, approval request, or posting was created by the recommendation." }
+      ]
+    },
+    {
+      "id": "virtual-company-finance-approval-once",
+      "applicationId": "virtual-company",
+      "title": "Finance Agent · Apply an independently approved change once",
+      "purpose": "Verify the pending approval boundary and idempotent execution of the approved action.",
+      "readiness": "draft",
+      "adapter": "configured-v2",
+      "workflow": { "version": 2, "reviewPath": "/finance", "steps": [
+        { "stepId": "request", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] },
+        { "stepId": "approve", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] },
+        { "stepId": "replay", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] }
+      ] },
+      "preconditions": "Required fixture: a fresh, disconnected test company with separate authenticated requester and authorized approver sessions. Seed one uncategorized USD 250 transaction, an eligible Software category, and a USD 100 categorization approval threshold. Use a scripted model, the real approval and categorization services, and a trusted way to replay delivery for the same approval and inspect its durable effects.",
+      "reviewQuestion": "Can the requester and approver tell what is pending, exactly what was approved, and when it took effect?",
+      "steps": [
+        { "id": "request", "title": "As the requester, ask Laura to set the category to Software and confirm the proposed action", "expected": "One approval is pending for the exact transaction and category. The transaction remains uncategorized." },
+        { "id": "approve", "title": "As the independent approver, approve the retained request", "expected": "The exact transaction becomes Software. The execution succeeds and its history links the requester, approver, approval, and resulting change." },
+        { "id": "replay", "title": "Redeliver the same approved continuation and reload the transaction", "expected": "The category stays Software, with exactly one committed category update attributable to the approval and no second business effect." }
+      ]
+    },
+    {
+      "id": "virtual-company-finance-approval-stale",
+      "applicationId": "virtual-company",
+      "title": "Finance Agent · Block approval after the target changes",
+      "purpose": "Verify that an approval for an earlier record version cannot overwrite a subsequent change.",
+      "readiness": "draft",
+      "adapter": "configured-v2",
+      "workflow": { "version": 2, "reviewPath": "/finance", "steps": [
+        { "stepId": "request", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] },
+        { "stepId": "change-target", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] },
+        { "stepId": "attempt-approval", "actions": [{ "kind": "extension", "extension": { "id": "finance-agent-step", "version": 1 }, "timeoutMs": 15000 }] }
+      ] },
+      "preconditions": "Required fixture: a fresh, disconnected test company with separate authenticated requester and authorized approver sessions, an uncategorized USD 250 transaction, eligible Software and Travel categories, and a USD 100 categorization approval threshold. Use a scripted model and the real approval service. Provide a trusted fixture action that changes the target category after the request is recorded.",
+      "reviewQuestion": "Does the stale outcome explain why Laura needs a fresh review and preserve the intervening change?",
+      "steps": [
+        { "id": "request", "title": "Request and confirm a change to Software, then retain the pending approval and target version", "expected": "One approval is pending for the captured version. The transaction is still uncategorized." },
+        { "id": "change-target", "title": "Change the transaction to Travel through the authorized fixture action", "expected": "The transaction now shows Travel. The pending approval still refers to the original reviewed state." },
+        { "id": "attempt-approval", "title": "As the independent approver, attempt to approve the retained request", "expected": "The continuation reports a stale target and requires fresh review. The intervening Travel category is preserved, with zero category updates attributable to the stale approval." }
       ]
     }
   ]

@@ -5,14 +5,14 @@ import { repositoryRoot, api } from '../src/settings.mjs';
 import { cleanEnvironment, launchProcess, stopProcess, boundedLog } from '../src/processes.mjs';
 import { freePort } from '../src/writerapp-host.mjs';
 
-export async function dashboardHost(dataPath, { environment = {} } = {}) {
+export async function dashboardHost(dataPath, { environment = {}, dllPath = process.env.GETRIGHT_DASHBOARD_DLL } = {}) {
   await mkdir(dataPath, { recursive: true });
   const origin = `http://127.0.0.1:${await freePort()}`;
   const projectPath = path.join(repositoryRoot, 'src/Getright.Dashboard');
   let child, output = '';
   async function start() {
     output = ''; const log = boundedLog(path.join(dataPath, 'dashboard.log'));
-    child = launchProcess('dotnet', [process.env.GETRIGHT_DASHBOARD_DLL || path.join(projectPath, 'bin/Release/net10.0/Getright.Dashboard.dll'), '--urls', origin], {
+    child = launchProcess('dotnet', [dllPath || path.join(projectPath, 'bin/Release/net10.0/Getright.Dashboard.dll'), '--urls', origin], {
       cwd: projectPath, env: { ...cleanEnvironment(), ASPNETCORE_ENVIRONMENT: 'Production', Getright__DataPath: dataPath, ...environment },
       log: value => { log(value); output = (output + value).slice(-6000); },
     });

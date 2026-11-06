@@ -14,6 +14,7 @@ export async function buildVirtualCompany({ worktree, jobRoot, version, signal, 
   await mkdir(root, { recursive: true }); await mkdir(jobRoot, { recursive: true });
   const template = path.join(repositoryRoot, 'worker/hosts/virtual-company');
   await copyFile(path.join(template, 'Program.cs'), path.join(root, 'Program.cs'));
+  await copyFile(path.join(template, 'FinanceUat.cs'), path.join(root, 'FinanceUat.cs'));
   await copyFile(path.join(template, 'Host.csproj.template'), path.join(root, 'Host.csproj'));
   // MSBuild's one-project limit does not serialize Roslyn's own compilation.
   // Large migration snapshots have crashed during parallel metadata emission.

@@ -29,6 +29,11 @@ jobs:
       - run: npm run smoke --prefix worker
       - run: npm run smoke:jobs --prefix worker
       - run: npm run smoke:virtual-company --prefix worker
+      - run: npm run smoke:runtime-configuration --prefix worker
+      - run: npm run smoke:configured-workflow --prefix worker
+      - run: npm run smoke:application-configuration --prefix worker
+      - run: npm run smoke:integration-migration --prefix worker
+      - run: npm run smoke:build-recipes --prefix worker
       - run: npm run smoke:operations --prefix worker
       - run: npm run smoke:review --prefix worker
       - run: npm run smoke:suites --prefix worker

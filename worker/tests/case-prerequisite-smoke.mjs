@@ -10,6 +10,8 @@ import {dashboardHost} from './dashboard-host.mjs';
 import {executeCaseImplementation} from '../src/case-implementation.mjs';
 import {runCommand} from '../src/processes.mjs';
 import {workflowEngineDigest} from '../src/workflow-engine.mjs';
+import {workerClaim} from '../src/run-execution.mjs';
+import {requireBuildSpace} from '../src/storage.mjs';
 
 const dataPath=path.join(repositoryRoot,'.local',`case-prerequisite-${Date.now()}`);await mkdir(dataPath,{recursive:true});
 const dashboard=await dashboardHost(dataPath),origin=dashboard.origin;
@@ -23,7 +25,9 @@ async function repository(name,file){
 const platform=await repository('platform','README.md'),application=await repository('application','VirtualCompany.sln');
 const configuration={dashboardUrl:origin,dataPath,headless:true,jobOptions:{repositoryPath:application.root,worktreeRoot:path.join(repositoryRoot,'worktrees'),codexTimeoutMs:15000,buildTimeoutMs:15000}};
 let buildCalls=0,launchCalls=0,browser;
-const adapters={platformRepository:platform.root,build:async()=>{buildCalls++;throw new Error('Synthetic build failure after valid planning.');},launch:async()=>{launchCalls++;throw new Error('Unexpected host launch.');}};
+const adapters={platformRepository:platform.root,
+ checkBuildSpace:(directories, applicationId)=>requireBuildSpace(directories, applicationId, async()=>({bavail:8*1024*1024,bsize:1024})),
+ build:async()=>{buildCalls++;throw new Error('Synthetic build failure after valid planning.');},launch:async()=>{launchCalls++;throw new Error('Unexpected host launch.');}};
 const report={scope:'Source-only prerequisites with synthetic compiler and real Git/browser; no Codex, real builds or providers',flows:[]};
 async function seed(title){
  const test={id:'draft-'+randomUUID().replaceAll('-',''),applicationId:'virtual-company',title,purpose:'Check prerequisites before compilation.',readiness:'draft',adapter:null,
@@ -34,7 +38,7 @@ async function seed(title){
  await expect(page.getByRole('region',{name:'Test case implementation',exact:true})).toContainText('Case approved and queued');await page.close();
  return {test,job:(await api(origin,`/api/case-implementations?test=${test.id}`))[0]};
 }
-const claim=()=>api(origin,'/api/worker/case-implementations/claim',{});
+const claim=()=>api(origin,'/api/worker/case-implementations/claim',workerClaim);
 const artifact=async(worktree,test,value)=>{const file=path.join(worktree,'config/implemented-tests',test.id+'.json');await mkdir(path.dirname(file),{recursive:true});await writeFile(file,JSON.stringify(value));};
 try{
  await api(origin,'/api/applications/virtual-company/profile',{applicationId:'virtual-company',baseUrl:'http://127.0.0.1:1',expectedBuildVersion:'synthetic',expectedUserId:'synthetic-owner',

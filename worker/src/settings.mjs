@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { prepareCompletion } from './run-completion.mjs';
 
 export const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -24,6 +25,7 @@ export function settings(env = process.env) {
 }
 
 export async function api(origin, route, body) {
+  body = await prepareCompletion(origin, route, body);
   const response = await fetch(`${origin}${route}`, {
     method: body === undefined ? 'GET' : 'POST',
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },

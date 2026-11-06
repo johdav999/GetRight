@@ -3,7 +3,7 @@ import path from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { api, localUrl, repositoryRoot } from '../src/settings.mjs';
-import { executeRun } from '../src/runner.mjs';
+import { executeRun, workerClaim } from '../src/run-execution.mjs';
 import { dashboardHost } from './dashboard-host.mjs';
 import { createWriterAppContractHost } from './writerapp-contract-host.mjs';
 
@@ -20,7 +20,7 @@ const report = { scope: 'Visible browser review lifecycle; disposable data', flo
 let writer, reviewBrowser;
 async function run(testId, options) {
   await api(dashboard.origin, '/api/runs', { testId });
-  const claim = await api(dashboard.origin, '/api/worker/claim', {});
+  const claim = await api(dashboard.origin, '/api/worker/claim', workerClaim);
   return executeRun(claim, { ...configuration, ...options });
 }
 try {
@@ -79,7 +79,7 @@ try {
     expectedUserId: writer.state.userId, isolatedDataConfirmed: true };
   await api(dashboard.origin, '/api/applications/writerapp/profile', profile);
   await api(dashboard.origin, '/api/runs', { testId: 'writerapp-create-save' });
-  const wrongBuild = await api(dashboard.origin, '/api/worker/claim', {});
+  const wrongBuild = await api(dashboard.origin, '/api/worker/claim', workerClaim);
   writer.state.version = 'drifted-after-queue';
   reviewed = false;
   const failed = await executeRun(wrongBuild, { ...configuration, onReviewReady: async ({ browser, run }) => {

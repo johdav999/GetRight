@@ -11,6 +11,7 @@ public sealed partial class RunStore
     private readonly object gate = new();
     private readonly string connectionString;
     private readonly UatCatalogue catalogue;
+    public ApplicationManifests Manifests => catalogue.Manifests;
     public string DataPath { get; }
     public static string ResolveDataPath(IConfiguration configuration)
     {
@@ -34,7 +35,7 @@ public sealed partial class RunStore
         command.ExecuteNonQuery();
         command.CommandText = "PRAGMA user_version";
         var schemaVersion = Convert.ToInt32(command.ExecuteScalar());
-        if (schemaVersion > 6) throw new InvalidOperationException("This database requires a newer Getright version.");
+        if (schemaVersion > 8) throw new InvalidOperationException("This database requires a newer Getright version.");
         using (var transaction = db.BeginTransaction())
         {
             command.Transaction = transaction;
@@ -86,7 +87,6 @@ public sealed partial class RunStore
                     PRAGMA user_version=5;
                     """;
                 command.ExecuteNonQuery();
-                SeedSuites(db, transaction);
             }
             if (schemaVersion < 6)
             {
@@ -100,8 +100,28 @@ public sealed partial class RunStore
                     """;
                 command.ExecuteNonQuery();
             }
+            // Snapshot and resource fields are additive JSON. Do not invent a
+            // manifest or engine identity for any pre-upgrade run or profile.
+            if (schemaVersion < 7)
+            {
+                command.CommandText = "PRAGMA user_version=7;";
+                command.ExecuteNonQuery();
+            }
+            if (schemaVersion < 8)
+            {
+                command.CommandText = """
+                    CREATE TABLE local_manifests (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+                    CREATE TABLE local_workflows (id TEXT PRIMARY KEY, application_id TEXT NOT NULL, payload TEXT NOT NULL);
+                    CREATE INDEX runs_qualification ON runs(json_extract(payload,'$.qualificationKey'))
+                      WHERE json_extract(payload,'$.qualificationKey') IS NOT NULL;
+                    PRAGMA user_version=8;
+                    """;
+                command.ExecuteNonQuery();
+            }
+            SeedSuites(db, transaction);
             transaction.Commit();
         }
+        LoadManifestOverrides();
         // A restarted dashboard cannot vouch for workers from the old process.
         foreach (var run in ReadRuns("WHERE json_extract(payload,'$.status') = 'running'"))
             Save(run with { Status = "interrupted", CompletedAt = DateTimeOffset.UtcNow,
@@ -139,36 +159,57 @@ public sealed partial class RunStore
         cmd.Parameters.AddWithValue("$payload", JsonSerializer.Serialize(run, AppJson.Options));
         cmd.Parameters.AddWithValue("$lease", (object?)lease ?? DBNull.Value); cmd.Parameters.AddWithValue("$expires", (object?)expires?.ToString("O") ?? DBNull.Value); cmd.ExecuteNonQuery();
     }
-    public UatRun Queue(string testId, ApplicationProfile? target = null, bool docked = false, bool stepByStep = false)
+    internal UatRun Queue(QueueDefinition verified, bool qualification = false, bool docked = false, bool stepByStep = false)
     {
         lock (gate)
         {
             if (stepByStep && !docked) throw new ArgumentException("Step-by-step runs require the docked browser.");
-            var test = Test(testId);
-            var demo = test.ApplicationId == "getright" && test.Adapter is "getright-save-note" or WorkflowContract.Adapter && test.Readiness == "ready";
-            var targeted = ApplicationSetup.Supported(test.ApplicationId, test.Adapter) && target?.ApplicationId == test.ApplicationId;
-            if (!demo && !targeted)
+            var current = QueueDefinitionFor(verified.Test.Id, qualification);
+            if (current.Target != verified.Target || current.Revision != verified.Revision || !ReferenceEquals(current.Manifest, verified.Manifest) ||
+                ApplicationManifests.Digest(current.Test) != ApplicationManifests.Digest(verified.Test))
+                throw new ArgumentException("The application setup or workflow changed during preflight. Check it again before running.");
+            var (test, manifest, target, revision, key) = current;
+            var targeted = ApplicationManifests.NeedsTarget(manifest);
+            if (test.Readiness == "draft" || !Manifests.Supports(test.ApplicationId, test.Adapter) ||
+                (targeted && target?.ApplicationId != test.ApplicationId))
                 throw new ArgumentException("This test needs an application adapter before it can run.");
-            if (targeted) ApplicationSetup.Validate(target!);
+            if (targeted) ApplicationSetup.Validate(target!, manifest);
             ApplicationSetup.ValidateWorkflowTarget(test, target);
             var id = Guid.NewGuid().ToString("N");
             var run = new UatRun(id, test.Id, test.ApplicationId, "queued", "pending",
-                DateTimeOffset.UtcNow, null, null, $"uat-{id}", null, null, [], null, null, test, targeted ? target : null, Docked: docked, StepByStep: stepByStep);
+                DateTimeOffset.UtcNow, null, null, $"uat-{id}", null, null, [], null, null, test, targeted ? target : null, Docked: docked, StepByStep: stepByStep,
+                DefinitionRevision: revision, QualificationKey: key);
+            run = run with { Configuration = Manifests.Freeze(run) };
             Save(run); return run;
         }
     }
-    public RunLease? Claim(string? workflowEngineDigest = null, bool supportsStepControl = false)
+    public RunLease? Claim(WorkerClaimRequest? request)
     {
         lock (gate)
         {
             Sweep();
             using var db = Open(); using var cmd = db.CreateCommand();
-            cmd.CommandText = "SELECT payload FROM runs WHERE json_extract(payload,'$.status')='queued' AND (COALESCE(json_extract(payload,'$.testSnapshot.adapter'),'') != 'declarative-v1' OR $engine IS NOT NULL) AND (COALESCE(json_extract(payload,'$.stepByStep'),0)=0 OR $steps=1) ORDER BY rowid LIMIT 1";
-            cmd.Parameters.AddWithValue("$steps", supportsStepControl ? 1 : 0);
-            cmd.Parameters.AddWithValue("$engine", WorkflowContract.Digest(workflowEngineDigest) ? workflowEngineDigest : DBNull.Value);
+            var worker = request?.Execution;
+            cmd.CommandText = """
+                SELECT payload FROM runs WHERE json_extract(payload,'$.status')='queued'
+                AND (COALESCE(json_extract(payload,'$.stepByStep'),0)=0 OR $steps=1)
+                AND (json_extract(payload,'$.configuration') IS NULL OR
+                     (json_extract(payload,'$.configuration.version')=$configuration AND
+                      (json_extract(payload,'$.configuration.requiredEngineDigest') IS NULL OR json_extract(payload,'$.configuration.requiredEngineDigest')=$engine)))
+                AND (json_extract(payload,'$.configuration.manifest.runtime.version') IS NULL OR json_extract(payload,'$.configuration.manifest.runtime.version')=$runtime)
+                AND (json_extract(payload,'$.testSnapshot.adapter') IS NOT 'configured-v2' OR $workflow=1)
+                AND (COALESCE(json_extract(payload,'$.testSnapshot.adapter'),'') != 'declarative-v1' OR json_extract(payload,'$.testSnapshot.implementation.engineDigest')=$engine)
+                ORDER BY rowid LIMIT 1
+                """;
+            cmd.Parameters.AddWithValue("$steps", request?.SupportsStepControl == true ? 1 : 0);
+            cmd.Parameters.AddWithValue("$configuration", ApplicationManifests.WorkerSupported(worker) ? ApplicationManifests.SnapshotVersion : DBNull.Value);
+            cmd.Parameters.AddWithValue("$engine", WorkflowContract.Digest(request?.WorkflowEngineDigest) ? request!.WorkflowEngineDigest : DBNull.Value);
+            cmd.Parameters.AddWithValue("$runtime", worker?.RuntimeContractVersion == RuntimeConfiguration.Version ? RuntimeConfiguration.Version : DBNull.Value);
+            cmd.Parameters.AddWithValue("$workflow", ApplicationManifests.ConfiguredWorkerSupported(worker) ? 1 : 0);
             var run = cmd.ExecuteScalar() is string payload ? JsonSerializer.Deserialize<UatRun>(payload, AppJson.Options) : null;
             if (run is null) return null;
-            run = run with { Status = "running", StartedAt = DateTimeOffset.UtcNow };
+            if (run.Configuration is { } snapshot) ApplicationManifests.RequireWorker(snapshot, worker);
+            run = run with { Status = "running", StartedAt = DateTimeOffset.UtcNow, Worker = ApplicationManifests.WorkerSupported(worker) ? worker : null };
             var lease = Guid.NewGuid().ToString("N"); Save(run, lease, DateTimeOffset.UtcNow.AddSeconds(45));
             return new RunLease(run, lease);
         }
@@ -191,22 +232,21 @@ public sealed partial class RunStore
             if (steps.Select(s => s.StepId).Distinct().Count() != steps.Count ||
                 steps.Any(s => !run.TestSnapshot.Steps.Any(t => t.Id == s.StepId) || s.Status is not ("passed" or "failed")))
                 throw new ArgumentException("Invalid step results.");
-            foreach (var step in steps) ValidateEvidence(run.Id, step.Screenshot);
+            foreach (var step in steps)
+            {
+                ValidateEvidence(run.Id, step.Screenshot);
+                ConfiguredWorkflows.ValidateObservations(run, step);
+            }
             ValidateEvidence(run.Id, request.Trace);
             if (request.Status == "passed" && (steps.Count != run.TestSnapshot.Steps.Count ||
                 steps.Any(s => s.Status != "passed" || s.Screenshot is null) || request.Trace is null ||
                 string.IsNullOrWhiteSpace(request.BuildVersion) || string.IsNullOrWhiteSpace(request.BaseUrl)))
                 throw new ArgumentException("Passing runs require every step, screenshots, trace and tested build identity.");
-            if (request.Status == "passed" && run.Target is { } target &&
-                (request.BuildVersion != target.ExpectedBuildVersion || request.BaseUrl != target.BaseUrl ||
-                 request.Identity?.UserId != target.ExpectedUserId || request.Identity.EvidenceKind != "live-application" ||
-                 (run.ApplicationId == "writerapp" ? !Guid.TryParse(request.Identity.DocumentId, out _) :
-                  !Guid.TryParse(request.Identity.CompanyId, out _) || request.Identity.CompanyId == target.ExpectedCompanyId ||
-                  request.Identity.IsolationCompanyId != target.ExpectedCompanyId || request.Identity.Roles?.Contains(target.ExpectedRole!) != true)))
-                throw new ArgumentException("The tested application, build, account and resource must match the run's frozen target.");
+            var identity = request.Status == "passed" ? ApplicationManifests.ValidateResult(run, request) : request.Identity is { } observed ? observed with { Resources = null } : null;
+            RuntimeConfiguration.ValidateResult(run.Configuration?.Manifest.Runtime, request.Runtime, request.Status == "passed");
             run = run with { Status = request.Status, CompletedAt = DateTimeOffset.UtcNow,
                 BuildVersion = request.BuildVersion, BaseUrl = request.BaseUrl, Steps = steps,
-                Trace = request.Trace, Error = request.Error, Identity = request.Identity };
+                Trace = request.Trace, Error = request.Error, Identity = identity, Runtime = request.Runtime };
             Save(run); return run;
         }
     }
@@ -270,11 +310,15 @@ public sealed partial class RunStore
             var prompt = new StringBuilder()
                 .AppendLine($"Application: {run.ApplicationId}\nTest: {run.TestSnapshot.Title} ({run.TestId})")
                 .AppendLine($"Run: {run.Id}\nTested build: {run.BuildVersion ?? "unavailable"}\nEnvironment: {run.BaseUrl ?? "unavailable"}")
+                .AppendLine($"Frozen manifest: {run.Configuration?.ManifestDigest ?? "not recorded"}\nFrozen workflow: {run.Configuration?.WorkflowDigest ?? "not recorded"}\nWorker engine: {(run.TestSnapshot.Workflow is null ? run.Worker?.EngineDigest : run.Worker?.ConfiguredWorkflowDigest) ?? "not recorded"}")
+                .AppendLine($"Manifest revision: {run.Configuration?.Manifest.Revision.ToString() ?? "not recorded"}\nImported workflow revision: {run.DefinitionRevision?.ToString() ?? "not applicable"}")
                 .AppendLine($"Execution: {(run.StepByStep ? "step by step" : "automatic")}{(run.AssistedSteps is { Count: > 0 } ? $"; manual interaction requested before steps {string.Join(", ", run.AssistedSteps)} (see trace)" : "")}")
                 .AppendLine($"Fixture: {run.FixtureId}\nStep: {step.Title} ({step.Id})\nExpected: {step.Expected}")
                 .AppendLine($"Evidence scope: {run.Identity?.EvidenceKind ?? (run.ApplicationId == "getright" ? "demo" : "unverified")}\nTest account: {run.Identity?.UserId ?? "unavailable"}\nDocument: {run.Identity?.DocumentId ?? "unavailable"}\nCompany: {run.Identity?.CompanyId ?? "unavailable"}\nIsolation reference company: {run.Identity?.IsolationCompanyId ?? "unavailable"}")
                 .AppendLine($"Source revision from build receipt: {run.Target?.SourceCommit ?? "not supplied"}\nSource had local changes: {(run.Target?.SourceCommit is null ? "not recorded" : run.Target.SourceWasDirty.ToString())}")
                 .AppendLine($"Account roles: {string.Join(", ", run.Identity?.Roles ?? [])}")
+                .AppendLine($"Tested resources: {string.Join(", ", (run.Identity?.Resources ?? []).Select(resource =>
+                    resource.ScopeId is null ? $"{resource.Kind} {resource.Id}" : $"{resource.Kind} {resource.Id} (scope {resource.ScopeId})"))}")
                 .AppendLine($"Automated result: {run.Status}\nScreenshot: {screenshot ?? "unavailable"}\nTrace: {run.Trace ?? "unavailable"}")
                 .AppendLine($"\nUser feedback:\n{request.Comment.Trim()}\n\nRequested outcome:\n{request.RequestedOutcome.Trim()}")
                 .AppendLine("\nAcceptance:\n- Address the requested outcome while preserving the existing workflow.")
@@ -308,7 +352,7 @@ public sealed partial class RunStore
     {
         lock (gate)
         {
-            ApplicationSetup.Validate(profile);
+            ApplicationSetup.Validate(profile, Manifests.Get(profile.ApplicationId));
             profile = profile with { BaseUrl = new Uri(profile.BaseUrl).GetLeftPart(UriPartial.Authority),
                 ExpectedBuildVersion = profile.ExpectedBuildVersion.Trim(), ExpectedUserId = profile.ExpectedUserId.Trim() };
             using var db = Open(); using var cmd = db.CreateCommand();
